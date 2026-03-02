@@ -837,13 +837,30 @@ function Style() {
       body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
 
       .shell{
-        min-height:100vh;
+        width: 390px;
+        height: 844px;
+        border-radius: 38px;
+        overflow: hidden;
         background: var(--bg);
         color: var(--text);
-        padding: 18px 14px 92px;
+        padding: calc(16px + env(safe-area-inset-top)) 14px calc(92px + env(safe-area-inset-bottom));
         display:flex;
-        justify-content:center;
+        flex-direction:column;
+        position: relative;
+        box-shadow: 0 35px 90px rgba(2, 6, 23, 0.25);
+        border: 1px solid rgba(148,163,184,0.40);
       }
+
+      /* Desktop centering */
+      body{ display:flex; align-items:center; justify-content:center; background: radial-gradient(1200px 700px at 20% 0%, rgba(0,168,224,0.14), transparent 55%),
+                    radial-gradient(1200px 700px at 80% 10%, rgba(0,51,102,0.12), transparent 55%),
+                    linear-gradient(180deg, #F6FBFF, #EEF5FA); }
+
+      /* If on a phone/small screen, use full viewport */
+      @media (max-width: 430px){
+        .shell{ width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; border: 0; }
+      }
+
       .top{ width:100%; max-width:420px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
       .brand{ display:flex; align-items:center; gap:10px; }
       .brand-mark{ width:38px; height:38px; border-radius:16px; background: rgba(0,168,224,0.16); border: 1px solid var(--stroke); box-shadow: var(--shadow); display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; }
@@ -853,7 +870,7 @@ function Style() {
       .brand-sub{ font-size:11px; color: var(--muted); margin-top:2px; }
       .top-right{ display:flex; align-items:center; gap:10px; }
 
-      .main{ width:100%; max-width:420px; }
+      .main{ width:100%; flex:1; overflow:auto; padding-bottom: 10px; }
       .stack{ display:flex; flex-direction:column; gap:12px; }
 
       .card{
@@ -1026,12 +1043,12 @@ function Style() {
       .tile-sub{ margin-top:8px; font-size:11px; color: var(--muted); }
 
       .nav{
-        position: fixed;
+        position: absolute;
         left: 50%;
-        bottom: 14px;
+        bottom: calc(10px + env(safe-area-inset-bottom));
         transform: translateX(-50%);
         width: calc(100% - 28px);
-        max-width: 420px;
+        max-width: 100%;
         display:grid;
         grid-template-columns: repeat(5, 1fr);
         gap: 8px;

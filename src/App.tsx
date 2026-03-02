@@ -5,7 +5,6 @@ import {
   Bell,
   Building2,
   ChevronRight,
-  Compass,
   Cpu,
   Flame,
   Heart,
@@ -13,7 +12,6 @@ import {
   KeyRound,
   Lock,
   Map as MapIcon,
-  Moon,
   Navigation,
   Radar,
   Shield,
@@ -52,14 +50,6 @@ type CampusPOI = {
   rating?: number;
 };
 
-type Friend = {
-  id: string;
-  name: string;
-  role: string;
-  location: string;
-  etaMins: number;
-};
-
 const ATTNAVY = "#003366";
 const ATTCYAN = "#00A8E0";
 
@@ -74,9 +64,6 @@ const POIS: CampusPOI[] = [
   { id: "mesh", name: "5G Mesh Node", type: "ops", bldg: "C", x: 86, y: 54, buzz: 40, rooms: 90 },
 ];
 
-const FRIENDS: Friend[] = [
-  { id: "sarah", name: "Sarah", role: "Mentor", location: "The Grove", etaMins: 3 },
-];
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");

@@ -603,16 +603,10 @@ function HomeTab({
   return (
     <div className="stack">
       <Card>
-        <CardHeader
-          title="Predictive Day"
-          subtitle="Driving in: Parking → Workspace → Meeting → Food"
-          right={<IconBadge tone="cyan" icon={<Sparkles size={14} />} text="AI Ready" />}
-        />
         <div className="pad">
           <div className="hero">
             <div className="hero-left">
               <div className="hello">Good Morning, John.</div>
-              <div className="hello-sub">First 5 minutes: the parking experience.</div>
             </div>
             <div className="hero-ic">{securityMode ? <Shield size={18} /> : <Sun size={18} />}</div>
           </div>

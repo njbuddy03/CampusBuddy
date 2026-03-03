@@ -29,6 +29,32 @@ import {
   X,
 } from "lucide-react";
 
+// Ultra-reliable inline SVGs for header actions (prevents any production icon rendering quirks)
+function MiniBellIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  );
+}
+
+function MiniControlsIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="4" y1="21" x2="4" y2="14" />
+      <line x1="4" y1="10" x2="4" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12" y2="3" />
+      <line x1="20" y1="21" x2="20" y2="16" />
+      <line x1="20" y1="12" x2="20" y2="3" />
+      <line x1="1" y1="14" x2="7" y2="14" />
+      <line x1="9" y1="8" x2="15" y2="8" />
+      <line x1="17" y1="16" x2="23" y2="16" />
+    </svg>
+  );
+}
+
 /**
  * AT&T Campus Companion (frontend demo)
  * - Mobile-first glass UI
@@ -1497,6 +1523,7 @@ function Style() {
 
       .iconGroup{ display:flex; gap:6px; padding:4px; border-radius:16px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); }
       .iconMini{ width:30px; height:30px; border-radius:12px; border:0; background: rgba(255,255,255,0.12); color: var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+      .iconMini:active{ transform: translateY(0.5px); }
       .iconMini svg{ display:block; stroke: currentColor; }
       .iconMiniOn{ background: rgba(0,168,224,0.16); outline: 2px solid rgba(0,168,224,0.22); }
 
@@ -1975,10 +2002,10 @@ export default function App() {
 
           <div className="iconGroup" aria-label="Top actions">
             <button className="iconMini" type="button" onClick={() => setSheet("notify")} aria-label="Notifications">
-              <Bell size={14} />
+              <MiniBellIcon size={14} />
             </button>
             <button className={cx("iconMini", kioskMode && "iconMiniOn")} type="button" onClick={() => setSheet("demo")} aria-label="Demo controls">
-              <SlidersHorizontal size={14} />
+              <MiniControlsIcon size={14} />
             </button>
           </div>
         </div>

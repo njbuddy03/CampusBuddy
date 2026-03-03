@@ -499,12 +499,12 @@ export default function App() {
             scenario={scenario}
             scenarioKey={scenarioKey}
             onScenario={setScenarioKey}
-            onReportIssue={() => setSheet("issue")}            workMode={activeWorkMode}
+            onReportIssue={() => setSheet("issue")}
+            workMode={activeWorkMode}
             onWorkMode={(m) => setWorkMode(m)}
             onGoExplore={() => setTab("explore")}
             onGoMap={() => setTab("map")}
             onGoSchedule={() => setTab("schedule")}
-            onGoProfile={() => setTab("profile")}
             upcoming={upcoming}
             now={now}
             recommendedGarage={recommendedGarage}
@@ -692,12 +692,12 @@ function HomeTab(props: {
   scenario: ScenarioState;
   scenarioKey: ScenarioKey;
   onScenario: (k: ScenarioKey) => void;
-  onReportIssue: () => void;  workMode: WorkMode;
+  onReportIssue: () => void;
+  workMode: WorkMode;
   onWorkMode: (m: WorkMode) => void;
   onGoExplore: () => void;
   onGoMap: () => void;
   onGoSchedule: () => void;
-  onGoProfile: () => void;
   upcoming?: CalendarEvent;
   now: string;
   recommendedGarage?: { garage: Garage; score: number; walk: number; why: string };
@@ -711,12 +711,12 @@ function HomeTab(props: {
   const {
     scenario,
     scenarioKey,
-    onScenario,    workMode,
+    onScenario,
+    workMode,
     onWorkMode,
     onGoExplore,
     onGoMap,
     onGoSchedule,
-    onGoProfile,
     onReportIssue,
     upcoming,
     now,
@@ -1777,4 +1777,5 @@ function Style() {
     `}</style>
   );
 }
+
 

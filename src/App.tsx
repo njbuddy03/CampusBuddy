@@ -1732,6 +1732,13 @@ function Style() {
       .range{ width:100%; margin-top:10px; }
       .select{ width:100%; border-radius:14px; padding:10px 12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); color: var(--text); font-weight:900; }
 
+      .form{ margin-top: 12px; display:flex; flex-direction:column; gap:12px; }
+      .formRow{ border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
+      .formLbl{ font-weight:1000; font-size:10px; color: var(--muted); }
+      .formVal{ margin-top:6px; font-weight:1000; font-size:12px; }
+      .textarea{ width:100%; margin-top:8px; border-radius:14px; padding:10px 12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); color: var(--text); font-weight:900; resize:none; }
+      .formHint{ margin-top:8px; font-size:10px; color: var(--muted); line-height:1.25; }
+
       .mini-grid-3{ display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; margin-top:10px; width:100%; }
       .mini{ display:flex; align-items:flex-start; gap:10px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:10px; min-width:0; overflow:hidden; }
       .mini-ic{ width:34px; height:34px; border-radius:16px; display:flex; align-items:center; justify-content:center; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); flex: 0 0 auto; }
@@ -1892,6 +1899,9 @@ export default function App() {
   const [sheet, setSheet] = useState<SheetKey>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [arrivalStaged, setArrivalStaged] = useState(false);
+
+  const [issueCategory, setIssueCategory] = useState<"Safety" | "Facilities" | "IT/Network" | "Wayfinding" | "Other">("Facilities");
+  const [issueDetails, setIssueDetails] = useState("");
 
   const scenario = useMemo(() => SCENARIOS.find((s) => s.key === scenarioKey)!, [scenarioKey]);
 
@@ -2135,15 +2145,67 @@ export default function App() {
       {sheet === "issue" ? (
         <div className="card" style={{ position: "absolute", left: 14, right: 14, bottom: 110, padding: 14 }}>
           <div className="card-title">Report issue</div>
-          <div className="card-sub" style={{ marginTop: 6 }}>Mock form placeholder</div>
-          <div className="row3">
-            <Button variant="secondary" onClick={() => setSheet(null)} left={<X size={16} />}>Close</Button>
+          <div className="card-sub" style={{ marginTop: 6 }}>Mock: sends an issue with your current location and context.</div>
+
+          <div className="form">
+            <div className="formRow">
+              <div className="formLbl">Location</div>
+              <div className="formVal">You • Campus grid 46, 60 • Nearest: Building B</div>
+            </div>
+
+            <div className="formRow">
+              <div className="formLbl">Category</div>
+              <select className="select" value={issueCategory} onChange={(e) => setIssueCategory(e.target.value as any)}>
+                <option>Facilities</option>
+                <option>Wayfinding</option>
+                <option>IT/Network</option>
+                <option>Safety</option>
+                <option>Other</option>
+              </select>
+            </div>
+
+            <div className="formRow">
+              <div className="formLbl">Details</div>
+              <textarea
+                className="textarea"
+                placeholder="Describe what happened. Example: Elevator in Building B is not responding on Floor 2."
+                value={issueDetails}
+                onChange={(e) => setIssueDetails(e.target.value)}
+                rows={4}
+              />
+              <div className="formHint">Future: photo upload, auto-diagnostics, and routing to the correct team.</div>
+            </div>
+          </div>
+
+          <div className="row3" style={{ marginTop: 12 }}>
+            <Button variant="secondary" onClick={() => setSheet(null)} left={<X size={16} />}>Cancel</Button>
+            <Button
+              variant="primary"
+              left={<Send size={16} />}
+              onClick={() => {
+                const trimmed = issueDetails.trim();
+                if (!trimmed) {
+                  showToast("Add details", "Please add a short description so we can route the issue.");
+                  return;
+                }
+                showToast(
+                  "Issue submitted",
+                  `Mock: ${issueCategory} ticket created with location and context. ETA and status would appear here.`
+                );
+                setIssueDetails("");
+                setIssueCategory("Facilities");
+                setSheet(null);
+              }}
+            >
+              Submit
+            </Button>
           </div>
         </div>
       ) : null}
     </div>
   );
 }
+
 
 
 

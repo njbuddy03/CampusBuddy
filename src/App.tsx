@@ -1457,24 +1457,6 @@ function AdminTab({ scenarioKey, onScenario }: { scenarioKey: ScenarioKey; onSce
   );
 }
 
-function HeatBar({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
-  const pct = clamp(value, 0, 100);
-  return (
-    <div className="heatrow">
-      <div className="heatrow-top">
-        <div className="heatrow-lbl">{label}</div>
-        <div className="heatrow-val" style={{ color: pctColor(pct) }}>
-          {pct}
-          {suffix ?? "%"}
-        </div>
-      </div>
-      <div className="heatbar">
-        <div className="heatfill" style={{ width: `${pct}%`, background: pctColor(pct) }} />
-      </div>
-    </div>
-  );
-}
-
 function HeatTile({ label, value }: { label: string; value: number }) {
   const v = clamp(value, 0, 100);
   const tone = v < 25 ? "ok" : v < 70 ? "warn" : "bad";
@@ -1902,20 +1884,9 @@ function PulseBar({ prefs }: { prefs: Preferences }) {
   );
 }
 
-function MiniStat({ label, value, icon, tone }: { label: string; value: string; icon: React.ReactNode; tone: "cyan" | "navy" | "ok" | "warn" | "bad" }) {
-  return (
-    <div className="mini">
-      <div className="mini-ic">{icon}</div>
-      <div>
-        <div className="mini-val">{value}</div>
-        <div className="mini-lbl">{label}</div>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [tab, setTab] = useState<TabKey>("home");
+  const [selectedPoi, setSelectedPoi] = useState<string | null>(null);
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("s1");
   const [securityMode, setSecurityMode] = useState(false);
   const [sheet, setSheet] = useState<SheetKey>(null);
@@ -1964,23 +1935,16 @@ export default function App() {
   const lunch = pickAmenity("lunch", nextBldg);
   const wellness = pickAmenity("wellness", nextBldg);
 
-  const themeVars: React.CSSProperties = useMemo(() => {
-    if (!securityMode) return {};
+  const themeVars = useMemo(() => {
+    if (!securityMode) return {} as React.CSSProperties;
     return {
-      // dark security mode tint
-      // @ts-ignore
-      "--bg": "radial-gradient(900px 600px at 50% 0%, rgba(0,168,224,0.10), transparent 60%), linear-gradient(180deg, #050B14, #0A1220)",
-      // @ts-ignore
-      "--text": "rgba(255,255,255,0.92)",
-      // @ts-ignore
-      "--muted": "rgba(255,255,255,0.62)",
-      // @ts-ignore
-      "--card": "rgba(15,23,42,0.55)",
-      // @ts-ignore
-      "--stroke": "rgba(148,163,184,0.25)",
-      // @ts-ignore
-      "--shadow": "0 18px 45px rgba(0,0,0,0.35)",
-    };
+      ["--bg" as any]: "radial-gradient(900px 600px at 50% 0%, rgba(0,168,224,0.10), transparent 60%), linear-gradient(180deg, #050B14, #0A1220)",
+      ["--text" as any]: "rgba(255,255,255,0.92)",
+      ["--muted" as any]: "rgba(255,255,255,0.62)",
+      ["--card" as any]: "rgba(15,23,42,0.55)",
+      ["--stroke" as any]: "rgba(148,163,184,0.25)",
+      ["--shadow" as any]: "0 18px 45px rgba(0,0,0,0.35)",
+    } as React.CSSProperties;
   }, [securityMode]);
 
   const showToast = (title: string, body: string) => {
@@ -2046,8 +2010,8 @@ export default function App() {
           <MapTab
             securityMode={securityMode}
             accessibleOn={effectivePrefs.accessibility}
-            selectedPoi={null}
-            onSelectPoi={() => null}
+            selectedPoi={selectedPoi}
+            onSelectPoi={setSelectedPoi}
             route={buildRoutePoints({ garage: recommendedGarage?.garage, workspace: recommendedWorkspace?.workspace, meetingBldg: nextBldg })}
             scenarioKey={scenarioKey}
             onScenario={setScenarioKey}

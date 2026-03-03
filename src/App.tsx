@@ -2037,7 +2037,12 @@ export default function App() {
         {tab === "admin" ? <AdminTab scenarioKey={scenarioKey} onScenario={setScenarioKey} /> : null}
       </main>
 
-      <button className="fab" onClick={() => setSecurityMode((v) => !v)} type="button" aria-label="Toggle security mode">
+      <button
+        className="fab"
+        onClick={() => setSheet("security")}
+        type="button"
+        aria-label="Security"
+      >
         <Shield size={18} />
       </button>
 
@@ -2047,6 +2052,83 @@ export default function App() {
         <div className="toast" role="status" aria-live="polite" onClick={() => setToast(null)}>
           <div className="toastTitle">{toast.title}</div>
           <div className="toastBody">{toast.body}</div>
+        </div>
+      ) : null}
+
+      {sheet === "security" ? (
+        <div className="card" style={{ position: "absolute", left: 14, right: 14, bottom: 110, padding: 14 }}>
+          <div className="card-title">Security</div>
+          <div className="card-sub" style={{ marginTop: 6 }}>Quick actions with live-location and escort mode (mock).</div>
+
+          <div className="grid2" style={{ marginTop: 10 }}>
+            <div className="glassline">
+              <div className="glass-ic"><Shield size={16} /></div>
+              <div className="glass-txt">
+                <div className="glass-title">Virtual escort</div>
+                <div className="glass-sub">Adds a safety radius on the map and prioritizes safe routing.</div>
+                <div className="glass-sub2">{securityMode ? "Active" : "Off"}</div>
+              </div>
+              <Button
+                variant={securityMode ? "secondary" : "primary"}
+                left={<ChevronRight size={16} />}
+                onClick={() => {
+                  setSecurityMode(true);
+                  setTab("map");
+                  setSheet(null);
+                  showToast("Escort requested", "Mock: security escort started. Map shows safety radius + safe-route bias.");
+                }}
+              >
+                {securityMode ? "View" : "Start"}
+              </Button>
+            </div>
+
+            <div className="glassline">
+              <div className="glass-ic"><Phone size={16} /></div>
+              <div className="glass-txt">
+                <div className="glass-title">Get security attention</div>
+                <div className="glass-sub">One-tap alert with your campus location.</div>
+                <div className="glass-sub2">Future: SOS hold-to-send</div>
+              </div>
+              <Button
+                variant="secondary"
+                left={<Bell size={16} />}
+                onClick={() => showToast("Security notified", "Mock: alert sent with your location and route context.")}
+              >
+                Alert
+              </Button>
+            </div>
+
+            <div className="glassline">
+              <div className="glass-ic"><Send size={16} /></div>
+              <div className="glass-txt">
+                <div className="glass-title">Share live location</div>
+                <div className="glass-sub">Share for 15 minutes with a trusted contact.</div>
+                <div className="glass-sub2">Mock: link created</div>
+              </div>
+              <Button
+                variant="secondary"
+                left={<ChevronRight size={16} />}
+                onClick={() => showToast("Location shared", "Mock: live-location link shared for 15 minutes.")}
+              >
+                Share
+              </Button>
+            </div>
+          </div>
+
+          <div className="row3" style={{ marginTop: 12 }}>
+            <Button variant="secondary" onClick={() => setSheet(null)} left={<X size={16} />}>Close</Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setSecurityMode(false);
+                setSheet(null);
+                showToast("Escort off", "Mock: escort mode disabled.");
+              }}
+              left={<X size={16} />}
+            >
+              Turn off
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -2062,6 +2144,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

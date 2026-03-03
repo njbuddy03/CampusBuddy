@@ -25,6 +25,7 @@ import {
   User,
   Wifi,
   X,
+  BarChart3,
 } from "lucide-react";
 
 /**
@@ -41,6 +42,8 @@ import {
 type TabKey = "home" | "explore" | "map" | "schedule" | "profile" | "admin";
 type ScenarioKey = "s1" | "s2" | "s3" | "s4" | "s5" | "s6";
 type SheetKey = null | "security" | "issue";
+
+type ToastState = null | { title: string; body: string };
 type BuildingCode = "A" | "B" | "C";
 type WorkMode = "Focus" | "Collaboration" | "Call" | "Recharge";
 type PersonaKey = "exec" | "parent" | "engineer";
@@ -107,6 +110,7 @@ type Preferences = {
   lowStimulus: boolean;
   quietPreference: boolean;
   favoriteOrder: string;
+  socialInsights: boolean;
 };
 
 type ScenarioState = {
@@ -153,6 +157,10 @@ const WORKSPACES: Workspace[] = [
   { id: "w4", name: "Phone booth row 2", bldg: "B", modeFit: ["Call"], quiet: 75, hasWhiteboard: false, hasDualMonitors: false, availableUntil: "11:15" },
   { id: "w5", name: "Focus suite 12", bldg: "C", modeFit: ["Focus", "Collaboration"], quiet: 80, hasWhiteboard: true, hasDualMonitors: true, availableUntil: "09:20" },
   { id: "w6", name: "Recovery lounge", bldg: "C", modeFit: ["Recharge"], quiet: 70, hasWhiteboard: false, hasDualMonitors: false, availableUntil: "12:00" },
+  { id: "w7", name: "AI Viz bench", bldg: "B", modeFit: ["Focus", "Collaboration"], quiet: 66, hasWhiteboard: true, hasDualMonitors: true, availableUntil: "10:10" },
+  { id: "w8", name: "Library pods", bldg: "A", modeFit: ["Focus"], quiet: 95, hasWhiteboard: false, hasDualMonitors: true, availableUntil: "11:00" },
+  { id: "w9", name: "Huddle ring", bldg: "C", modeFit: ["Collaboration"], quiet: 48, hasWhiteboard: true, hasDualMonitors: false, availableUntil: "10:45" },
+  { id: "w10", name: "Low-stimulus nook", bldg: "A", modeFit: ["Recharge", "Call"], quiet: 90, hasWhiteboard: false, hasDualMonitors: false, availableUntil: "12:30" },
 ];
 
 const AMENITIES: Amenity[] = [
@@ -161,6 +169,10 @@ const AMENITIES: Amenity[] = [
   { id: "a3", name: "Legacy tacos", kind: "lunch", bldg: "B", waitMins: 7, open: true },
   { id: "a4", name: "Protein bowl bar", kind: "breakfast", bldg: "B", waitMins: 6, open: true },
   { id: "a5", name: "Nature trail", kind: "wellness", bldg: "A", waitMins: 0, open: true },
+  { id: "a6", name: "Hydration bar", kind: "wellness", bldg: "B", waitMins: 1, open: true },
+  { id: "a7", name: "Smart salad lab", kind: "lunch", bldg: "A", waitMins: 5, open: true },
+  { id: "a8", name: "Protein espresso", kind: "coffee", bldg: "C", waitMins: 3, open: true },
+  { id: "a9", name: "Grab-and-go breakfast", kind: "breakfast", bldg: "A", waitMins: 2, open: true },
 ];
 
 const PERSONAS: Array<{ key: PersonaKey; name: string; line: string; defaults: Partial<Preferences> }> = [
@@ -220,472 +232,51 @@ function rankGarages(args: { garages: Garage[]; nextBldg: BuildingCode; prefs: P
   return [...garages]
     .map((g) => {
       const walk = g.walkTo[nextBldg];
-      const availPct = (g.available / g.total) * 100;
-      const walkScore = 100 - clamp(walk * 9, 0, 95);
-      const availabilityScore = clamp(availPct * 4, 0, 100);
-
-      const evPenalty = prefs.needsEV && g.evAvailable <= 0 ? 40 : 0;
-      const accPenalty = prefs.accessibility && g.accessibleAvailable <= 0 ? 40 : 0;
-      const tolerancePenalty = walk > prefs.walkingToleranceMins ? (walk - prefs.walkingToleranceMins) * 7 : 0;
-
-      const score = walkScore * 0.55 + availabilityScore * 0.35 - evPenalty - accPenalty - tolerancePenalty;
-
-      const why: string[] = [];
-      why.push(`${g.available} spots`);
-      why.push(`${walk} min walk`);
-      if (prefs.needsEV) why.push(`${g.evAvailable} EV`);
-      if (prefs.accessibility) why.push(`${g.accessibleAvailable} accessible`);
-
-      return { garage: g, score, walk, why: why.join(" • ") };
+      const availabilityPct = (g.available / g.total) * 100;
+      const evBoost = prefs.needsEV ? g.evAvailable * 1.2 : 0;
+      const accBoost = prefs.accessibility ? g.accessibleAvailable * 1.6 : 0;
+      const score = availabilityPct * 0.7 + evBoost + accBoost - walk * 8;
+      const whyParts = [
+        `Closest to Building ${nextBldg} (${walk} min)`,
+        `${g.available} spots`,
+        prefs.needsEV ? `EV ${g.evAvailable}` : null,
+        prefs.accessibility ? `Accessible ${g.accessibleAvailable}` : null,
+      ].filter(Boolean);
+      return { garage: g, score, walk, why: whyParts.join(" • ") };
     })
     .sort((a, b) => b.score - a.score);
 }
 
-function rankWorkspaces(args: {
-  workspaces: Workspace[];
-  fromGarage: Garage;
-  nextMeetingBldg: BuildingCode;
-  workMode: WorkMode;
-  prefs: Preferences;
-  now: string;
-}) {
-  const { workspaces, fromGarage, nextMeetingBldg, workMode, prefs, now } = args;
-  const nowMin = hhmmToMin(now);
-
+function rankWorkspaces(args: { workspaces: Workspace[]; mode: WorkMode; prefs: Preferences; nextBldg: BuildingCode }) {
+  const { workspaces, mode, prefs, nextBldg } = args;
   return [...workspaces]
-    .filter((w) => hhmmToMin(w.availableUntil) > nowMin)
-    .filter((w) => w.modeFit.includes(workMode))
     .map((w) => {
-      const walkFromGarage = fromGarage.walkTo[w.bldg];
-      const meetingProximity = w.bldg === nextMeetingBldg ? 2 : 7;
-
-      const proximityScore = 100 - clamp(walkFromGarage * 10, 0, 95);
-      const meetingScore = 100 - clamp(meetingProximity * 10, 0, 95);
-
-      const quietBoost = (prefs.quietPreference || prefs.lowStimulus) ? (w.quiet / 100) * 26 : 0;
-      const monitorBoost = w.hasDualMonitors ? 8 : 0;
-      const whiteboardBoost = w.hasWhiteboard ? 6 : 0;
-      const tolerancePenalty = walkFromGarage > prefs.walkingToleranceMins ? (walkFromGarage - prefs.walkingToleranceMins) * 8 : 0;
-
-      const score = proximityScore * 0.52 + meetingScore * 0.28 + quietBoost + monitorBoost + whiteboardBoost - tolerancePenalty;
-
-      const why: string[] = [];
-      why.push(`${walkFromGarage} min walk`);
-      why.push(`until ${formatTime(w.availableUntil)}`);
-      if (prefs.quietPreference || prefs.lowStimulus) why.push(`quiet ${w.quiet}/100`);
-      if (w.hasWhiteboard) why.push("whiteboard");
-      if (w.hasDualMonitors) why.push("dual monitors");
-
-      return { workspace: w, score, walkFromGarage, why: why.join(" • ") };
+      const modeFit = w.modeFit.includes(mode) ? 1 : 0;
+      const quietBoost = (prefs.quietPreference || prefs.lowStimulus) ? w.quiet * 0.6 : w.quiet * 0.25;
+      const nearBoost = w.bldg === nextBldg ? 18 : 0;
+      const featuresBoost = (w.hasDualMonitors ? 6 : 0) + (w.hasWhiteboard && mode === "Collaboration" ? 8 : 0);
+      const score = modeFit * 40 + quietBoost + nearBoost + featuresBoost;
+      const whyParts = [
+        modeFit ? `${mode} match` : "Alternate",
+        w.bldg === nextBldg ? "Near meeting" : null,
+        (prefs.quietPreference || prefs.lowStimulus) ? `Quiet ${w.quiet}/100` : null,
+        w.hasDualMonitors ? "Dual monitors" : null,
+        w.hasWhiteboard ? "Whiteboard" : null,
+      ].filter(Boolean);
+      return { workspace: w, score, why: whyParts.join(" • ") };
     })
     .sort((a, b) => b.score - a.score);
 }
 
-function bestAmenity(kind: Amenity["kind"], bldg: BuildingCode) {
-  const options = AMENITIES.filter((a) => a.kind === kind && a.open);
-  const local = options.filter((a) => a.bldg === bldg);
-  const pickFrom = local.length ? local : options;
-  return [...pickFrom].sort((a, b) => a.waitMins - b.waitMins)[0];
-}
-
-function IconBadge({ icon, text, tone = "neutral" }: { icon?: React.ReactNode; text: string; tone?: "neutral" | "cyan" | "navy" | "ok" | "warn" | "bad" }) {
-  return (
-    <span className={cx("badge", `badge-${tone}`)}>
-      {icon ? <span className="badge-ic">{icon}</span> : null}
-      <span>{text}</span>
-    </span>
-  );
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return <div className="card">{children}</div>;
-}
-
-function CardHeader({ title, subtitle, right }: { title: string; subtitle?: string; right?: React.ReactNode }) {
-  return (
-    <div className="card-hd">
-      <div>
-        <div className="card-title">{title}</div>
-        {subtitle ? <div className="card-sub">{subtitle}</div> : null}
-      </div>
-      {right ? <div className="card-right">{right}</div> : null}
-    </div>
-  );
-}
-
-function Button({ children, onClick, variant = "primary", left }: { children: React.ReactNode; onClick?: () => void; variant?: "primary" | "secondary" | "ghost"; left?: React.ReactNode }) {
-  return (
-    <button className={cx("btn", `btn-${variant}`)} onClick={onClick} type="button">
-      {left ? <span className="btn-ic">{left}</span> : null}
-      <span>{children}</span>
-    </button>
-  );
-}
-
-function BottomSheet({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: React.ReactNode }) {
-  if (!open) return null;
-  return (
-    <div className="sheetOverlay" role="dialog" aria-modal="true" aria-label={title}>
-      <button className="sheetBackdrop" onClick={onClose} type="button" aria-label="Close" />
-      <div className="sheet">
-        <div className="sheetHd">
-          <div className="sheetHdLeft">
-            <div className="sheetHdTitle">{title}</div>
-            <div className="sheetHdSub">Mock workflow for demo</div>
-          </div>
-          <button className="sheetClose" onClick={onClose} type="button" aria-label="Close">
-            <X size={18} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Toggle({ label, value, onChange, icon }: { label: string; value: boolean; onChange: (v: boolean) => void; icon?: React.ReactNode }) {
-  return (
-    <button className="toggle" onClick={() => onChange(!value)} type="button">
-      <span className="toggle-left">
-        {icon ? <span className="toggle-ic">{icon}</span> : null}
-        <span className="toggle-label">{label}</span>
-      </span>
-      <span className={cx("toggle-pill", value && "toggle-on")}>
-        <span className={cx("toggle-dot", value && "toggle-dot-on")} />
-      </span>
-    </button>
-  );
-}
-
-function MiniStat({ label, value, icon, tone = "cyan" }: { label: string; value: string; icon: React.ReactNode; tone?: "cyan" | "navy" | "ok" | "warn" | "bad" }) {
-  return (
-    <div className="mini">
-      <div className={cx("mini-ic", `mini-${tone}`)}>{icon}</div>
-      <div className="mini-txt">
-        <div className="mini-val">{value}</div>
-        <div className="mini-lbl">{label}</div>
-      </div>
-    </div>
-  );
-}
-
-export default function App() {
-  const [tab, setTab] = useState<TabKey>("home");
-  const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("s1");
-  const [securityMode, setSecurityMode] = useState(false);
-  const [selectedPoi, setSelectedPoi] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<SheetKey>(null);
-  const [issueCategory, setIssueCategory] = useState<"Facilities" | "IT" | "Safety" | "Other">("Facilities");
-  const [issueText, setIssueText] = useState("");
-
-  const scenario = useMemo(() => SCENARIOS.find((s) => s.key === scenarioKey)!, [scenarioKey]);
-
-  // Scenario 3: allow live work mode switching (re-ranks workspaces instantly)
-  const [workMode, setWorkMode] = useState<WorkMode>(scenario.workMode);
-  useEffect(() => {
-    setWorkMode(scenario.workMode);
-  }, [scenarioKey]);
-
-  const activeWorkMode: WorkMode = scenarioKey === "s3" ? workMode : scenario.workMode;
-
-  const [prefs, setPrefs] = useState<Preferences>({
-    persona: "exec",
-    needsEV: true,
-    accessibility: false,
-    walkingToleranceMins: 8,
-    lowStimulus: false,
-    quietPreference: true,
-    favoriteOrder: "Brisket bowl",
-  });
-
-  // Apply scenario and persona defaults in a predictable way
-  const effectivePrefs = useMemo(() => {
-    const p = PERSONAS.find((x) => x.key === prefs.persona);
-    const merged: Preferences = { ...prefs, ...p?.defaults } as Preferences;
-    if (scenario.accessibleFocus) {
-      merged.accessibility = true;
-      merged.lowStimulus = true;
-      merged.quietPreference = true;
-      merged.walkingToleranceMins = Math.min(merged.walkingToleranceMins, 7);
-    }
-    return merged;
-  }, [prefs, scenario.accessibleFocus]);
-
-  const now = scenario.now;
-  const upcoming = useMemo(() => nextEvent(now, CALENDAR), [now]);
-  const nextBldg: BuildingCode = upcoming?.bldg ?? "B";
-
-  const garageRank = useMemo(() => rankGarages({ garages: GARAGES, nextBldg, prefs: effectivePrefs }), [nextBldg, effectivePrefs]);
-  const recommendedGarage = garageRank[0];
-  const backupGarage = garageRank[1];
-
-  const workspaceRank = useMemo(() => {
-    if (!recommendedGarage) return [] as Array<{ workspace: Workspace; score: number; walkFromGarage: number; why: string }>;
-    return rankWorkspaces({
-      workspaces: WORKSPACES,
-      fromGarage: recommendedGarage.garage,
-      nextMeetingBldg: nextBldg,
-      workMode: activeWorkMode,
-      prefs: effectivePrefs,
-      now,
-    });
-  }, [recommendedGarage, nextBldg, activeWorkMode, effectivePrefs, now]);
-
-  const recommendedWorkspace = workspaceRank[0];
-
-  const coffee = useMemo(() => bestAmenity("coffee", nextBldg), [nextBldg]);
-  const breakfast = useMemo(() => bestAmenity("breakfast", nextBldg), [nextBldg]);
-  const lunch = useMemo(() => bestAmenity("lunch", nextBldg), [nextBldg]);
-  const wellness = useMemo(() => bestAmenity("wellness", nextBldg), [nextBldg]);
-
-  const themeVars = useMemo(() => {
-    if (!securityMode) {
-      return {
-        "--bg":
-          "radial-gradient(900px 500px at 20% 0%, rgba(0,168,224,0.18), transparent 55%), radial-gradient(900px 500px at 80% 10%, rgba(0,51,102,0.15), transparent 55%), linear-gradient(180deg, #F6FBFF, #F2F7FB)",
-        "--text": "#0B1220",
-        "--muted": "rgba(11,18,32,0.65)",
-        "--card": "rgba(255,255,255,0.55)",
-        "--stroke": "rgba(3,51,102,0.18)",
-        "--shadow": "0 18px 55px rgba(0, 51, 102, 0.14)",
-        "--navy": ATTNAVY,
-        "--cyan": ATTCYAN,
-        "--ok": "rgba(16,185,129,0.92)",
-        "--warn": "rgba(245,158,11,0.92)",
-        "--bad": "rgba(244,63,94,0.92)",
-      } as React.CSSProperties;
-    }
-    return {
-      "--bg":
-        "radial-gradient(900px 500px at 20% 0%, rgba(0,168,224,0.18), transparent 55%), radial-gradient(900px 500px at 80% 10%, rgba(59,130,246,0.18), transparent 55%), linear-gradient(180deg, #0A1020, #070B14)",
-      "--text": "rgba(255,255,255,0.92)",
-      "--muted": "rgba(255,255,255,0.68)",
-      "--card": "rgba(255,255,255,0.08)",
-      "--stroke": "rgba(0,168,224,0.22)",
-      "--shadow": "0 18px 55px rgba(0, 168, 224, 0.12)",
-      "--navy": ATTNAVY,
-      "--cyan": ATTCYAN,
-      "--ok": "rgba(52,211,153,0.92)",
-      "--warn": "rgba(251,191,36,0.92)",
-      "--bad": "rgba(251,113,133,0.92)",
-    } as React.CSSProperties;
-  }, [securityMode]);
-
-  return (
-    <div className="shell" style={themeVars}>
-      <Style />
-
-      <header className="top">
-        <div className="brand">
-          <div className="brand-mark">
-            <span className="dot" />
-            <span className="dot dot2" />
-          </div>
-          <div>
-            <div className="brand-title">AT&T Campus Companion</div>
-            <div className="brand-sub">Executive demo • Future campus</div>
-          </div>
-        </div>
-
-        <div className="top-right">
-          <IconBadge tone="neutral" icon={<Sparkles size={14} />} text={scenario.title} />
-          {securityMode ? <IconBadge tone="cyan" icon={<Shield size={14} />} text="Escort" /> : null}
-        </div>
-      </header>
-
-      <main className="main">
-        {tab === "home" ? (
-          <HomeTab
-            scenario={scenario}
-            scenarioKey={scenarioKey}
-            onScenario={setScenarioKey}
-            onReportIssue={() => setSheet("issue")}
-            workMode={activeWorkMode}
-            onWorkMode={(m) => setWorkMode(m)}
-            onGoExplore={() => setTab("explore")}
-            onGoMap={() => setTab("map")}
-            onGoSchedule={() => setTab("schedule")}
-            upcoming={upcoming}
-            now={now}
-            recommendedGarage={recommendedGarage}
-            backupGarage={backupGarage}
-            recommendedWorkspace={recommendedWorkspace}
-            coffee={coffee}
-            breakfast={breakfast}
-            lunch={lunch}
-            wellness={wellness}
-          />
-        ) : null}
-
-        {tab === "explore" ? (
-          <ExploreTab
-            scenarioKey={scenarioKey}
-            onScenario={setScenarioKey}
-            prefs={effectivePrefs}
-            onGoMap={() => setTab("map")}
-          />
-        ) : null}
-
-        {tab === "map" ? (
-          <MapTab
-            securityMode={securityMode}
-            selectedPoi={selectedPoi}
-            onSelectPoi={setSelectedPoi}
-            route={buildRoutePoints({
-              garage: recommendedGarage?.garage,
-              workspace: recommendedWorkspace?.workspace,
-              meetingBldg: nextBldg,
-            })}
-            scenarioKey={scenarioKey}
-            onScenario={setScenarioKey}
-          />
-        ) : null}
-
-        {tab === "schedule" ? (
-          <ScheduleTab
-            now={now}
-            scenarioKey={scenarioKey}
-            onScenario={setScenarioKey}
-            events={CALENDAR}
-          />
-        ) : null}
-
-        {tab === "profile" ? (
-          <ProfileTab
-            prefs={prefs}
-            onPrefs={setPrefs}
-            personaKey={prefs.persona}
-            onPersona={(k) => {
-  const persona = PERSONAS.find((x) => x.key === k);
-  setPrefs((p) => ({
-    ...p,
-    persona: k,
-    ...(persona?.defaults ?? {}),
-  }));
-}}
-            scenarioKey={scenarioKey}
-            onScenario={setScenarioKey}
-          />
-        ) : null}
-
-        {tab === "admin" ? <AdminTab scenarioKey={scenarioKey} onScenario={setScenarioKey} /> : null}
-      </main>
-
-      <BottomNav tab={tab} onChange={setTab} />
-
-      <button className={cx("fab", securityMode && "fab-on")} onClick={() => setSheet("security")} aria-label="Get security attention" type="button">
-        <Shield size={18} />
-      </button>
-
-      <BottomSheet open={sheet !== null} title={sheet === "security" ? "Security" : "Report issue"} onClose={() => setSheet(null)}>
-        {sheet === "security" ? (
-          <div className="sheetBody">
-            <div className="sheetRow">
-              <div className="sheetLeft">
-                <div className="sheetTitle">Request help</div>
-                <div className="sheetSub">Notifies on-campus security with your live location (mock).</div>
-              </div>
-              <Button left={<Send size={16} />} onClick={() => alert("Security notified (mock).")}>Notify</Button>
-            </div>
-            <div className="sheetRow">
-              <div className="sheetLeft">
-                <div className="sheetTitle">Call security</div>
-                <div className="sheetSub">Connect to campus security desk (mock).</div>
-              </div>
-              <Button variant="secondary" left={<Phone size={16} />} onClick={() => alert("Calling security (mock).")}>Call</Button>
-            </div>
-            <div className="sheetRow">
-              <div className="sheetLeft">
-                <div className="sheetTitle">Virtual escort</div>
-                <div className="sheetSub">Toggle escort mode with a safety radius on the map.</div>
-              </div>
-              <Button variant="secondary" left={<Radar size={16} />} onClick={() => setSecurityMode((v) => !v)}>
-                {securityMode ? "On" : "Off"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
-        {sheet === "issue" ? (
-          <div className="sheetBody">
-            <div className="field">
-              <div className="fieldLbl">Location</div>
-              <div className="sheetRow" style={{ padding: 12 }}>
-                <div className="sheetLeft">
-                  <div className="sheetTitle">You</div>
-                  <div className="sheetSub">Map pin: x 46% • y 60% • Building B</div>
-                </div>
-                <IconBadge tone="cyan" icon={<MapIcon size={14} />} text="Pinned" />
-              </div>
-            </div>
-
-            <div className="field">
-              <div className="fieldLbl">Category</div>
-              <select className="select" value={issueCategory} onChange={(e) => setIssueCategory(e.target.value as any)}>
-                <option>Facilities</option>
-                <option>IT</option>
-                <option>Safety</option>
-                <option>Other</option>
-              </select>
-            </div>
-
-            <div className="field">
-              <div className="fieldLbl">What happened</div>
-              <textarea
-                className="textarea"
-                value={issueText}
-                onChange={(e) => setIssueText(e.target.value)}
-                placeholder="Describe the issue. Include building, room, or a landmark."
-                rows={5}
-              />
-            </div>
-
-            <div className="sheetActions">
-              <Button variant="secondary" onClick={() => { setIssueText(""); setSheet(null); }} left={<X size={16} />}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  if (!issueText.trim()) {
-                    alert("Please enter details.");
-                    return;
-                  }
-                  alert(`Issue submitted (mock) • ${issueCategory} • Building B • x 46 y 60`);
-                  setIssueText("");
-                  setSheet(null);
-                }}
-                left={<Send size={16} />}
-              >
-                Submit
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </BottomSheet>
-    </div>
-  );
-}
-
-function ScenarioPicker({ value, onChange }: { value: ScenarioKey; onChange: (k: ScenarioKey) => void }) {
-  return (
-    <div className="scenarioCtl">
-      <div className="seg" aria-label="scenario picker">
-        {SCENARIOS.map((s) => {
-          const on = s.key === value;
-          return (
-            <button
-              key={s.key}
-              className={cx("segbtn", on && "segon")}
-              onClick={() => onChange(s.key)}
-              type="button"
-            >
-              {s.key.toUpperCase()}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
+function pickAmenity(kind: Amenity["kind"], preferredBldg?: BuildingCode) {
+  return [...AMENITIES]
+    .filter((a) => a.kind === kind && a.open)
+    .sort((a, b) => {
+      const aNear = preferredBldg && a.bldg === preferredBldg ? -1 : 0;
+      const bNear = preferredBldg && b.bldg === preferredBldg ? -1 : 0;
+      if (aNear !== bNear) return aNear - bNear;
+      return a.waitMins - b.waitMins;
+    })[0];
 }
 
 function HomeTab(props: {
@@ -693,6 +284,10 @@ function HomeTab(props: {
   scenarioKey: ScenarioKey;
   onScenario: (k: ScenarioKey) => void;
   onReportIssue: () => void;
+  onAction: (title: string, body: string) => void;
+  socialOn: boolean;
+  arrivalStaged: boolean;
+  onStartArrival: () => void;
   workMode: WorkMode;
   onWorkMode: (m: WorkMode) => void;
   onGoExplore: () => void;
@@ -712,12 +307,16 @@ function HomeTab(props: {
     scenario,
     scenarioKey,
     onScenario,
+    onReportIssue,
+    onAction,
+    socialOn,
+    arrivalStaged,
+    onStartArrival,
     workMode,
     onWorkMode,
     onGoExplore,
     onGoMap,
     onGoSchedule,
-    onReportIssue,
     upcoming,
     now,
     recommendedGarage,
@@ -729,13 +328,15 @@ function HomeTab(props: {
     wellness,
   } = props;
 
-  const minutesToMeeting = upcoming ? Math.max(0, diffMins(now, upcoming.start)) : 999;
+  const [showWhy, setShowWhy] = useState(false);
 
   const arrivalMode = scenario.employeeState === "driving";
+  const onCampusMode = scenario.employeeState === "in-building";
   const freeTimeMode = scenario.key === "s2";
   const dayPlanMode = scenario.key === "s4";
   const discoveryMode = scenario.discoveryMode;
 
+  const minutesToMeeting = upcoming ? Math.max(0, diffMins(now, upcoming.start)) : 999;
   const foodPick = freeTimeMode ? coffee : arrivalMode ? (breakfast ?? coffee) : lunch ?? coffee;
   const foodLabel = freeTimeMode ? "Coffee" : arrivalMode ? "Breakfast" : "Food";
 
@@ -746,20 +347,71 @@ function HomeTab(props: {
           <div className="home-top">
             <div>
               <div className="hello">Good morning, John.</div>
-              <div className="hello-sub">
-                {scenario.subtitle}
-                {scenario.employeeState === "driving" ? " • arriving" : scenario.employeeState === "parked" ? " • parked" : " • on campus"}
+              <div className="hello-sub">{scenario.subtitle}</div>
+              <div className="statePills">
+                <IconBadge tone={scenario.employeeState === "driving" ? "cyan" : "neutral"} text="Driving" />
+                <IconBadge tone={scenario.employeeState === "parked" ? "cyan" : "neutral"} text="Parked" />
+                <IconBadge tone={scenario.employeeState === "in-building" ? "cyan" : "neutral"} text="On campus" />
               </div>
             </div>
           </div>
 
-          {/* Scenario 3: Work mode switcher */}
+          {scenario.key === "s1" && arrivalMode ? (
+            <div className="glassline" style={{ marginTop: 10 }}>
+              <div className="glass-ic"><Sparkles size={16} /></div>
+              <div className="glass-txt">
+                <div className="glass-title">One-tap day start</div>
+                <div className="glass-sub">Confirm parking, hold a workspace, set the route, and queue coffee.</div>
+                <div className="glass-sub2">{arrivalStaged ? "Staged. You’re ready to step out of the car." : "Ready when you are."}</div>
+              </div>
+              <Button
+                variant={arrivalStaged ? "secondary" : "primary"}
+                left={<ChevronRight size={16} />}
+                onClick={() => {
+                  onStartArrival();
+                  onAction(
+                    "Arrival staged",
+                    "Mock: parking confirmed, workspace held, route queued, and coffee added. Future: reservations + badge + payment."
+                  );
+                }}
+              >
+                {arrivalStaged ? "Staged" : "Start"}
+              </Button>
+            </div>
+          ) : null}
+
+          {socialOn && (freeTimeMode || onCampusMode) ? (
+            <div className="glassline" style={{ marginTop: 10 }}>
+              <div className="glass-ic"><User size={16} /></div>
+              <div className="glass-txt">
+                <div className="glass-title">Social insight</div>
+                <div className="glass-sub">Sarah (Mentor) is at The Grove.</div>
+                <div className="glass-sub2">15-minute coffee catch-up fits your window.</div>
+              </div>
+              <Button
+                variant="secondary"
+                left={<Coffee size={16} />}
+                onClick={() => onAction("Invite sent", "Mock: invite sent. Future: availability + auto-booking.")}
+              >
+                Invite
+              </Button>
+            </div>
+          ) : null}
+
           {scenario.key === "s3" ? (
             <div className="modebar">
               <div className="mode-title">Work mode</div>
               <div className="modechips">
                 {(["Focus", "Collaboration", "Call", "Recharge"] as WorkMode[]).map((m) => (
-                  <button key={m} className={cx("modechip", m === workMode && "modechip-on")} onClick={() => onWorkMode(m)} type="button">
+                  <button
+                    key={m}
+                    className={cx("modechip", m === workMode && "modechip-on")}
+                    onClick={() => {
+                      onWorkMode(m);
+                      onAction("Work mode", `Mock: switching to ${m} and re-ranking workspaces.`);
+                    }}
+                    type="button"
+                  >
                     {m}
                   </button>
                 ))}
@@ -768,32 +420,42 @@ function HomeTab(props: {
             </div>
           ) : null}
 
-          {/* Scenario 5: Discovery */}
           {discoveryMode ? (
-            <div className="glassline" style={{ marginTop: 10 }}>
-              <div className="glass-ic">
-                <Compass size={16} />
+            <>
+              <div className="glassline" style={{ marginTop: 10 }}>
+                <div className="glass-ic"><Compass size={16} /></div>
+                <div className="glass-txt">
+                  <div className="glass-title">Discovery</div>
+                  <div className="glass-sub">15-minute mini tours for productivity, wellness, food, and innovation.</div>
+                  <div className="glass-sub2">Start with one tap.</div>
+                </div>
+                <Button
+                  variant="secondary"
+                  left={<ChevronRight size={16} />}
+                  onClick={() => {
+                    onGoExplore();
+                    onAction("Discovery", "Mock: starting a guided campus tour. Future: indoor wayfinding + narration.");
+                  }}
+                >
+                  Start
+                </Button>
               </div>
-              <div className="glass-txt">
-                <div className="glass-title">Discovery</div>
-                <div className="glass-sub">15-minute mini tours for productivity, wellness, food, and innovation.</div>
-                <div className="glass-sub2">Start with one tap.</div>
+
+              <div className="checklist">
+                <div className="check-h">First week checklist</div>
+                <div className="check-item"><span className="check-dot" />Set preferences</div>
+                <div className="check-item"><span className="check-dot" />Find 3 quiet focus spaces</div>
+                <div className="check-item"><span className="check-dot" />Pick a go-to coffee spot</div>
+                <div className="check-item"><span className="check-dot" />Take a 10-minute campus loop</div>
               </div>
-              <Button variant="secondary" left={<ChevronRight size={16} />} onClick={onGoExplore}>
-                Start
-              </Button>
-            </div>
+            </>
           ) : null}
 
-          {/* Core ordering stays consistent. Logic changes per scenario. */}
           <div className="grid2" style={{ marginTop: 10 }}>
-            {/* Parking is only shown when arriving. Once you're on campus, Home prioritizes what’s next. */}
             {arrivalMode ? (
               <>
                 <div className="glassline">
-                  <div className="glass-ic">
-                    <Car size={16} />
-                  </div>
+                  <div className="glass-ic"><Car size={16} /></div>
                   <div className="glass-txt">
                     <div className="glass-title">Parking</div>
                     <div className="glass-sub">
@@ -805,24 +467,34 @@ function HomeTab(props: {
                     </div>
                     <div className="glass-sub2">{recommendedGarage ? recommendedGarage.why : ""}</div>
                   </div>
-                  <Button variant="secondary" left={<Navigation size={16} />} onClick={onGoMap}>
+                  <Button
+                    variant="secondary"
+                    left={<Navigation size={16} />}
+                    onClick={() => {
+                      onGoMap();
+                      onAction("Route prepared", "Mock: routing to next stop. Future: turn-by-turn + accessibility.");
+                    }}
+                  >
                     Route
                   </Button>
                 </div>
 
                 {backupGarage ? (
                   <div className="glassline">
-                    <div className="glass-ic">
-                      <Shield size={16} />
-                    </div>
+                    <div className="glass-ic"><Shield size={16} /></div>
                     <div className="glass-txt">
                       <div className="glass-title">Alternate</div>
-                      <div className="glass-sub">
-                        {backupGarage.garage.name} • {backupGarage.garage.available} spots • {backupGarage.walk} min
-                      </div>
+                      <div className="glass-sub">{backupGarage.garage.name} • {backupGarage.garage.available} spots • {backupGarage.walk} min</div>
                       <div className="glass-sub2">{backupGarage.why}</div>
                     </div>
-                    <Button variant="secondary" left={<ChevronRight size={16} />} onClick={onGoMap}>
+                    <Button
+                      variant="secondary"
+                      left={<ChevronRight size={16} />}
+                      onClick={() => {
+                        onGoMap();
+                        onAction("Alternate selected", "Mock: switched to backup garage. Future: auto-reserve EV/accessible bay.");
+                      }}
+                    >
                       Use
                     </Button>
                   </div>
@@ -830,30 +502,28 @@ function HomeTab(props: {
               </>
             ) : null}
 
-            {/* 1) Workspace */}
             <div className="glassline">
-              <div className="glass-ic">
-                <Building2 size={16} />
-              </div>
+              <div className="glass-ic"><Building2 size={16} /></div>
               <div className="glass-txt">
                 <div className="glass-title">Workspace</div>
                 <div className="glass-sub">
                   {recommendedWorkspace && recommendedGarage
-                    ? `${recommendedWorkspace.workspace.name} • Building ${recommendedWorkspace.workspace.bldg} • ${recommendedWorkspace.walkFromGarage} min walk`
+                    ? `${recommendedWorkspace.workspace.name} • Building ${recommendedWorkspace.workspace.bldg} • ${recommendedWorkspace.walkFromGarage} min walk • air good`
                     : "No workspace available"}
                 </div>
                 <div className="glass-sub2">{recommendedWorkspace ? recommendedWorkspace.why : ""}</div>
               </div>
-              <Button variant="secondary" left={<ChevronRight size={16} />} onClick={() => alert("Reserved (mock).")}>
+              <Button
+                variant="secondary"
+                left={<ChevronRight size={16} />}
+                onClick={() => onAction("Workspace held", "Mock: workspace held. Future: reservations + badge access.")}
+              >
                 Hold
               </Button>
             </div>
 
-            {/* 3) Meeting (calendar) */}
             <div className="glassline">
-              <div className="glass-ic">
-                <Calendar size={16} />
-              </div>
+              <div className="glass-ic"><Calendar size={16} /></div>
               <div className="glass-txt">
                 <div className="glass-title">Next meeting</div>
                 <div className="glass-sub">
@@ -863,61 +533,89 @@ function HomeTab(props: {
                 </div>
                 <div className="glass-sub2">{upcoming ? `Leave in ${Math.max(0, minutesToMeeting - 6)} min` : ""}</div>
               </div>
-              <Button variant="secondary" left={<ChevronRight size={16} />} onClick={onGoSchedule}>
+              <Button
+                variant="secondary"
+                left={<ChevronRight size={16} />}
+                onClick={() => {
+                  onGoSchedule();
+                  onAction("Schedule", "Mock: opening timeline with leave-time nudges.");
+                }}
+              >
                 View
               </Button>
             </div>
 
-            {/* 4) Food / coffee / wellness */}
             <div className="glassline">
-              <div className="glass-ic">
-                {foodLabel === "Coffee" ? <Coffee size={16} /> : foodLabel === "Breakfast" ? <Timer size={16} /> : <Coffee size={16} />}
-              </div>
+              <div className="glass-ic">{foodLabel === "Coffee" ? <Coffee size={16} /> : foodLabel === "Breakfast" ? <Timer size={16} /> : <Coffee size={16} />}</div>
               <div className="glass-txt">
                 <div className="glass-title">{foodLabel}</div>
-                <div className="glass-sub">
-                  {foodPick
-                    ? `${foodPick.name} • wait ${foodPick.waitMins} min`
-                    : ""}
+                <div className="glass-sub">{foodPick ? `${foodPick.name} • wait ${foodPick.waitMins} min` : ""}</div>
+                <div className="glass-sub2">
+                  {freeTimeMode ? "Fits your time window." : foodPick && foodPick.waitMins >= 6 ? "Forecast: wait may spike soon." : "Low wait, near next stop."}
                 </div>
-                <div className="glass-sub2">{freeTimeMode ? "Fits your time window." : "Low wait, near next stop."}</div>
               </div>
-              <Button variant="secondary" left={<Bell size={16} />} onClick={() => alert("Ordered (mock).")}>
+              <Button
+                variant="secondary"
+                left={<Bell size={16} />}
+                onClick={() => onAction("Order placed", "Mock: order queued. Future: payment + pickup QR.")}
+              >
                 Order
               </Button>
             </div>
 
-            {/* Scenario 2: short wellness */}
             {freeTimeMode && wellness ? (
               <div className="glassline">
-                <div className="glass-ic">
-                  <Heart size={16} />
-                </div>
+                <div className="glass-ic"><Heart size={16} /></div>
                 <div className="glass-txt">
                   <div className="glass-title">Wellness</div>
                   <div className="glass-sub">{wellness.name} • 8-minute reset</div>
                   <div className="glass-sub2">Time-optimized.</div>
                 </div>
-                <Button variant="secondary" left={<ChevronRight size={16} />} onClick={onGoMap}>
+                <Button
+                  variant="secondary"
+                  left={<ChevronRight size={16} />}
+                  onClick={() => {
+                    onGoMap();
+                    onAction("Wellness route", "Mock: routing to wellness. Future: occupancy + coach mode.");
+                  }}
+                >
                   Go
                 </Button>
               </div>
             ) : null}
 
-            {/* Scenario 4: day orchestration */}
             {dayPlanMode ? (
               <div className="glassline">
-                <div className="glass-ic">
-                  <Briefcase size={16} />
-                </div>
+                <div className="glass-ic"><Briefcase size={16} /></div>
                 <div className="glass-txt">
                   <div className="glass-title">Day plan</div>
                   <div className="glass-sub">Meetings + free windows + stops.</div>
                   <div className="glass-sub2">One timeline.</div>
                 </div>
-                <Button variant="secondary" left={<ChevronRight size={16} />} onClick={onGoSchedule}>
+                <Button
+                  variant="secondary"
+                  left={<ChevronRight size={16} />}
+                  onClick={() => {
+                    onGoSchedule();
+                    onAction("Day plan", "Mock: opening day orchestration view.");
+                  }}
+                >
                   Open
                 </Button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="whyBlock">
+            <button className="whyBtn" onClick={() => setShowWhy((v) => !v)} type="button">
+              <span className="whyTitle">Why these recommendations</span>
+              <ChevronRight size={16} className={cx("whyArrow", showWhy && "whyArrowOn")} />
+            </button>
+            {showWhy ? (
+              <div className="whyPanel">
+                <div className="whyLine"><span className="whyKey">Inputs</span> Calendar • Occupancy • Preferences • Walking tolerance</div>
+                <div className="whyLine"><span className="whyKey">Context</span> {scenario.employeeState} • {formatTime(now)}</div>
+                <div className="whyLine"><span className="whyKey">Priority</span> {arrivalMode ? "Parking → Workspace → Meeting → Food" : freeTimeMode ? "Time-fit suggestions" : "Next best actions"}</div>
               </div>
             ) : null}
           </div>
@@ -928,9 +626,10 @@ function HomeTab(props: {
           </div>
 
           <div className="row3" style={{ marginTop: 12 }}>
-            <Button variant="secondary" left={<MessageSquare size={16} />} onClick={onReportIssue}>
-              Report issue
-            </Button>
+            <Button variant="secondary" left={<MessageSquare size={16} />} onClick={() => {
+              onReportIssue();
+              onAction("Report issue", "Mock: issue form opens. Future: auto-location + photo + routing to facilities/security.");
+            }}>Report issue</Button>
           </div>
         </div>
       </Card>
@@ -1068,6 +767,7 @@ function buildRoutePoints(args: { garage?: Garage; workspace?: Workspace; meetin
 
 function MapTab({
   securityMode,
+  accessibleOn,
   selectedPoi,
   onSelectPoi,
   route,
@@ -1075,6 +775,7 @@ function MapTab({
   onScenario,
 }: {
   securityMode: boolean;
+  accessibleOn: boolean;
   selectedPoi: string | null;
   onSelectPoi: (id: string | null) => void;
   route: Array<{ x: number; y: number; label: string }>;
@@ -1087,7 +788,7 @@ function MapTab({
       <Card>
         <CardHeader title="Map" subtitle="Campus view and routes" right={<IconBadge tone="cyan" icon={<MapIcon size={14} />} text="Route" />} />
         <div className="pad">
-          <CampusMap securityMode={securityMode} selectedPoi={selectedPoi} onSelectPoi={onSelectPoi} route={route} />
+          <CampusMap securityMode={securityMode} accessibleOn={accessibleOn} selectedPoi={selectedPoi} onSelectPoi={onSelectPoi} route={route} />
 
           {poi ? (
             <div className="mapDetail">
@@ -1098,7 +799,7 @@ function MapTab({
                 <div className="glass-txt">
                   <div className="glass-title">{poi.name}</div>
                   <div className="glass-sub">Building {poi.bldg} • {poi.availability}% open • buzz {poi.buzz}/100</div>
-                  <div className="glass-sub2">Tap again to clear.</div>
+                  <div className="glass-sub2">Indoor routing planned • Tap again to clear.</div>
                 </div>
                 <Button variant="secondary" left={<Navigation size={16} />} onClick={() => alert("Routing (mock).")}>
                   Go
@@ -1121,11 +822,13 @@ function MapTab({
 
 function CampusMap({
   securityMode,
+  accessibleOn,
   selectedPoi,
   onSelectPoi,
   route,
 }: {
   securityMode: boolean;
+  accessibleOn: boolean;
   selectedPoi: string | null;
   onSelectPoi: (id: string | null) => void;
   route: Array<{ x: number; y: number; label: string }>;
@@ -1223,6 +926,7 @@ function CampusMap({
       <div className="map-legend">
         <IconBadge tone="neutral" icon={<Flame size={14} />} text="Buzz heatmap" />
         {securityMode ? <IconBadge tone="cyan" icon={<Shield size={14} />} text="Escort" /> : null}
+        {accessibleOn ? <IconBadge tone="neutral" icon={<BadgeCheck size={14} />} text="Accessible route" /> : null}
       </div>
     </div>
   );
@@ -1371,6 +1075,7 @@ function ProfileTab({
             <Toggle label="Accessible routing" value={prefs.accessibility} onChange={(v) => onPrefs({ ...prefs, accessibility: v })} icon={<Shield size={16} />} />
             <Toggle label="Low-stimulus" value={prefs.lowStimulus} onChange={(v) => onPrefs({ ...prefs, lowStimulus: v })} icon={<Heart size={16} />} />
             <Toggle label="Prefer quiet" value={prefs.quietPreference} onChange={(v) => onPrefs({ ...prefs, quietPreference: v })} icon={<Activity size={16} />} />
+            <Toggle label="Social insights" value={prefs.socialInsights} onChange={(v) => onPrefs({ ...prefs, socialInsights: v })} icon={<User size={16} />} />
 
             <div className="slider">
               <div className="slider-top">
@@ -1414,33 +1119,333 @@ function ProfileTab({
 }
 
 function AdminTab({ scenarioKey, onScenario }: { scenarioKey: ScenarioKey; onScenario: (k: ScenarioKey) => void }) {
+  type AdminView = "overview" | "experience" | "space" | "network";
+  type ExpSub = "friction" | "engagement" | "brand";
+  const [view, setView] = useState<AdminView>("overview");
+  const [expSub, setExpSub] = useState<ExpSub>("friction");
+
+  const metrics = {
+    energySavingsWk: 4200,
+    minutesSavedDay: 18,
+    employeesOnsite: 6200,
+
+    parkingSearchDown: 70,
+    waitDown: 35,
+    onTimeStarts: 87,
+    wayfinding: 92,
+    routeSuccess: 92,
+    noiseMatch: 88,
+    workspaceMatch: 84,
+    reservationAdoption: 68,
+    badgeSuccess: 97,
+    supportDeflection: 24,
+
+    returnToCampus: 76,
+    tourCompletion: 62,
+    amenityNps: 48,
+    wellnessOptIn: 64,
+    eventsAttendance: 41,
+    communityMoments: 3.8,
+
+    recruitingLift: 12,
+    offerAccept: 6.5,
+    retentionLift: 3.2,
+    visitorBriefings: 22,
+
+    utilA: 64,
+    utilB: 14,
+    utilC: 78,
+    roomAvailability: 74,
+    deskMatch: 86,
+    hvacEff: 12,
+    incidentsWk: 2,
+
+    latencyMs: 12,
+    reliability: 99,
+    sensorCoverage: 96,
+    inferenceMs: 38,
+    forecastAcc: 89,
+    failureRate: 0.3,
+
+    carbonAvoidedT: 410,
+  };
+
+  const annualizedEnergy = metrics.energySavingsWk * 52;
+  const timeRecapturedWk = Math.round((metrics.minutesSavedDay * metrics.employeesOnsite * 5) / 60);
+  const wowIndex = clamp(
+    Math.round(
+      metrics.returnToCampus * 0.35 +
+        metrics.tourCompletion * 0.25 +
+        (metrics.amenityNps + 100) * 0.2 +
+        metrics.wellnessOptIn * 0.2
+    ),
+    0,
+    100
+  );
+
+  const Metric = ({ label, value, note, tone, icon }: { label: string; value: string; note?: string; tone?: "cyan" | "navy" | "ok" | "warn" | "bad"; icon?: React.ReactNode }) => (
+    <div className={cx("metric", tone && `metric-${tone}`)}>
+      <div className="metricTop">
+        {icon ? <div className="metricIc">{icon}</div> : null}
+        <div className="metricVal">{value}</div>
+      </div>
+      <div className="metricLbl">{label}</div>
+      {note ? <div className="metricNote">{note}</div> : null}
+    </div>
+  );
+
+  const Section = ({ title, sub, right, children }: { title: string; sub: string; right?: React.ReactNode; children: React.ReactNode }) => (
+    <div className="admin-card">
+      <div className="admin-head">
+        <div>
+          <div className="admin-h">{title}</div>
+          <div className="admin-sub">{sub}</div>
+        </div>
+        {right ? right : null}
+      </div>
+      <div style={{ marginTop: 10 }}>{children}</div>
+    </div>
+  );
+
   return (
     <div className="stack">
       <Card>
-        <CardHeader title="Admin" subtitle="ROI signals" right={<IconBadge tone="cyan" icon={<Shield size={14} />} text="SVP" />} />
+        <CardHeader title="Admin" subtitle="SVP dashboard" right={<IconBadge tone="cyan" icon={<BarChart3 size={14} />} text="ROI" />} />
         <div className="pad">
-          <div className="mini-grid-3">
-            <MiniStat label="Energy" value="$4.2k/wk" icon={<Sparkles size={16} />} tone="ok" />
-            <MiniStat label="Utilization" value="B: 14%" icon={<Building2 size={16} />} tone="warn" />
-            <MiniStat label="5G" value="12ms" icon={<Wifi size={16} />} tone="cyan" />
+          <div className="adminSeg" role="tablist" aria-label="Admin views">
+            <button type="button" className={cx("adminSegBtn", view === "overview" && "adminSegOn")} onClick={() => setView("overview")}>Overview</button>
+            <button type="button" className={cx("adminSegBtn", view === "experience" && "adminSegOn")} onClick={() => setView("experience")}>Experience</button>
+            <button type="button" className={cx("adminSegBtn", view === "space" && "adminSegOn")} onClick={() => setView("space")}>Space</button>
+            <button type="button" className={cx("adminSegBtn", view === "network" && "adminSegOn")} onClick={() => setView("network")}>Network</button>
           </div>
 
-          <div className="admin-card">
-            <div className="admin-h">Space health</div>
-            <div className="admin-sub">Building B under-utilized.</div>
-            <div className="heatmap">
-              <HeatTile label="A" value={64} />
-              <HeatTile label="B" value={14} />
-              <HeatTile label="C" value={78} />
-            </div>
-          </div>
+          {view === "overview" ? (
+            <>
+              <div className="heroGrid">
+                <div className="hero">
+                  <div className="heroRow">
+                    <div className="heroTitle">Annualized value</div>
+                    <IconBadge tone="ok" icon={<Sparkles size={14} />} text="Mock" />
+                  </div>
+                  <div className="heroVal">${Math.round(annualizedEnergy / 1000)}M</div>
+                  <div className="heroSub">Modeled energy optimization savings at ${metrics.energySavingsWk.toLocaleString()}/week.</div>
+                </div>
+                <div className="hero">
+                  <div className="heroRow">
+                    <div className="heroTitle">Time recaptured</div>
+                    <IconBadge tone="cyan" icon={<Timer size={14} />} text="Hours" />
+                  </div>
+                  <div className="heroVal">{timeRecapturedWk.toLocaleString()}</div>
+                  <div className="heroSub">Estimated hours/week saved across on-site employees.</div>
+                </div>
+              </div>
 
-          <div className="admin-card">
-            <div className="admin-h">Network</div>
-            <div className="admin-sub">Private 5G latency and reliability.</div>
-            <HeatBar label="Latency" value={12} suffix="ms" />
-            <HeatBar label="Reliability" value={99} suffix="%" />
-          </div>
+              <Section
+                title="Campus wow factor"
+                sub="Adoption signals that show the campus is working as an experience, not just a building (mock)."
+                right={<IconBadge tone="navy" icon={<Sparkles size={14} />} text={`Wow ${wowIndex}`} />}
+              >
+                <div className="metricGrid">
+                  <Metric label="Return-to-campus" value={`${metrics.returnToCampus}%`} note="Hybrid engagement" tone="cyan" icon={<User size={16} />} />
+                  <Metric label="Tour completion" value={`${metrics.tourCompletion}%`} note="New hire flow" tone="navy" icon={<Compass size={16} />} />
+                  <Metric label="Amenity NPS" value={`+${metrics.amenityNps}`} note="Daily delight" tone="ok" icon={<Coffee size={16} />} />
+                  <Metric label="Wellness opt-in" value={`${metrics.wellnessOptIn}%`} note="Habit forming" tone="ok" icon={<Heart size={16} />} />
+                  <Metric label="Community events" value={`${metrics.eventsAttendance}%`} note="Participation" tone="cyan" icon={<MessageSquare size={16} />} />
+                  <Metric label="Moments shared" value={`${metrics.communityMoments}/wk`} note="Brand halo" tone="navy" icon={<Send size={16} />} />
+                </div>
+                <div className="admin-note">These signals correlate to higher on-site engagement and smoother hybrid days.</div>
+              </Section>
+
+              <Section
+                title="Experience health"
+                sub="Signals across arrival, navigation, and space matching (mock)."
+                right={<IconBadge tone="cyan" icon={<BadgeCheck size={14} />} text="Stable" />}
+              >
+                <div className="metricGrid">
+                  <Metric label="Parking search" value={`-${metrics.parkingSearchDown}%`} note="Less roaming" tone="cyan" icon={<Car size={16} />} />
+                  <Metric label="Wait-time" value={`-${metrics.waitDown}%`} note="Forecasting" tone="navy" icon={<Coffee size={16} />} />
+                  <Metric label="On-time starts" value={`${metrics.onTimeStarts}%`} note="Leave prompts" tone="cyan" icon={<Calendar size={16} />} />
+                  <Metric label="Wayfinding" value={`${metrics.wayfinding}%`} note="Fewer wrong turns" tone="cyan" icon={<Navigation size={16} />} />
+                  <Metric label="Workspace match" value={`${metrics.workspaceMatch}%`} note="Mode fit" tone="ok" icon={<Building2 size={16} />} />
+                  <Metric label="Reservations" value={`${metrics.reservationAdoption}%`} note="Adoption" tone="navy" icon={<BadgeCheck size={16} />} />
+                </div>
+              </Section>
+
+              <Section
+                title="Space health"
+                sub="Utilization snapshot by building to target activation and investments (mock)."
+                right={<IconBadge tone="neutral" icon={<Building2 size={14} />} text="Utilization" />}
+              >
+                <div className="heatmap" style={{ marginTop: 0 }}>
+                  <HeatTile label="A" value={metrics.utilA} />
+                  <HeatTile label="B" value={metrics.utilB} />
+                  <HeatTile label="C" value={metrics.utilC} />
+                </div>
+              </Section>
+            </>
+          ) : null}
+
+          {view === "experience" ? (
+            <>
+              <div className="subSeg" role="tablist" aria-label="Experience views">
+                <button type="button" className={cx("subSegBtn", expSub === "friction" && "subSegOn")} onClick={() => setExpSub("friction")}>Friction</button>
+                <button type="button" className={cx("subSegBtn", expSub === "engagement" && "subSegOn")} onClick={() => setExpSub("engagement")}>Engagement</button>
+                <button type="button" className={cx("subSegBtn", expSub === "brand" && "subSegOn")} onClick={() => setExpSub("brand")}>Brand</button>
+              </div>
+
+              {expSub === "friction" ? (
+                <>
+                  <Section
+                    title="Arrival + transitions"
+                    sub="Outcome metrics tied to parking guidance, routing, and space matching (mock)."
+                    right={<IconBadge tone="cyan" icon={<Sparkles size={14} />} text="Live" />}
+                  >
+                    <div className="metricGrid">
+                      <Metric label="Parking search" value={`-${metrics.parkingSearchDown}%`} note="Reduced roaming" tone="cyan" icon={<Car size={16} />} />
+                      <Metric label="Wait-time" value={`-${metrics.waitDown}%`} note="Forecasting" tone="navy" icon={<Coffee size={16} />} />
+                      <Metric label="Route success" value={`${metrics.routeSuccess}%`} note="Correct arrival" tone="ok" icon={<Navigation size={16} />} />
+                      <Metric label="Badge success" value={`${metrics.badgeSuccess}%`} note="Faster entry" tone="ok" icon={<BadgeCheck size={16} />} />
+                      <Metric label="Workspace match" value={`${metrics.workspaceMatch}%`} note="Mode + quiet" tone="ok" icon={<Building2 size={16} />} />
+                      <Metric label="Support deflection" value={`${metrics.supportDeflection}%`} note="Less friction" tone="warn" icon={<MessageSquare size={16} />} />
+                    </div>
+                  </Section>
+
+                  <Section
+                    title="Accessibility and safety"
+                    sub="Inclusive routing plus fast support and escort response (mock)."
+                    right={<IconBadge tone="neutral" icon={<Shield size={14} />} text="Safety" />}
+                  >
+                    <div className="metricGrid">
+                      <Metric label="Accessible routes" value="96%" note="Coverage" tone="ok" icon={<BadgeCheck size={16} />} />
+                      <Metric label="Low-stimulus" value="28%" note="Opt-in" tone="cyan" icon={<Heart size={16} />} />
+                      <Metric label="EV success" value="91%" note="Find a bay" tone="navy" icon={<Car size={16} />} />
+                      <Metric label="Safety response" value="3.2m" note="Escort" tone="navy" icon={<Shield size={16} />} />
+                      <Metric label="Issue resolution" value="12m" note="Facilities" tone="cyan" icon={<MessageSquare size={16} />} />
+                      <Metric label="Assist requests" value="0.4/day" note="Help needed" tone="warn" icon={<Phone size={16} />} />
+                    </div>
+                  </Section>
+                </>
+              ) : null}
+
+              {expSub === "engagement" ? (
+                <>
+                  <Section
+                    title="Engagement"
+                    sub="Signals that predict sustained on-site adoption and productivity (mock)."
+                    right={<IconBadge tone="navy" icon={<User size={14} />} text="People" />}
+                  >
+                    <div className="metricGrid">
+                      <Metric label="Return-to-campus" value={`${metrics.returnToCampus}%`} note="Hybrid pull" tone="cyan" icon={<User size={16} />} />
+                      <Metric label="Tour completion" value={`${metrics.tourCompletion}%`} note="Onboarding" tone="navy" icon={<Compass size={16} />} />
+                      <Metric label="Wellness opt-in" value={`${metrics.wellnessOptIn}%`} note="Habit forming" tone="ok" icon={<Heart size={16} />} />
+                      <Metric label="Community events" value={`${metrics.eventsAttendance}%`} note="Belonging" tone="cyan" icon={<MessageSquare size={16} />} />
+                      <Metric label="Reservations" value={`${metrics.reservationAdoption}%`} note="Daily use" tone="navy" icon={<BadgeCheck size={16} />} />
+                      <Metric label="Noise match" value={`${metrics.noiseMatch}%`} note="Focus" tone="ok" icon={<Activity size={16} />} />
+                    </div>
+                  </Section>
+
+                  <Section
+                    title="Sustainability"
+                    sub="Experience-led optimization outcomes (mock)."
+                    right={<IconBadge tone="ok" icon={<Flame size={14} />} text="ESG" />}
+                  >
+                    <div className="metricGrid">
+                      <Metric label="Carbon avoided" value={`${metrics.carbonAvoidedT}t`} note="Annual" tone="ok" icon={<Flame size={16} />} />
+                      <Metric label="HVAC efficiency" value={`+${metrics.hvacEff}%`} note="Smart zones" tone="ok" icon={<Sparkles size={16} />} />
+                      <Metric label="Energy savings" value={`$${metrics.energySavingsWk.toLocaleString()}/wk`} note="Modeled" tone="warn" icon={<Sparkles size={16} />} />
+                      <Metric label="Sensor coverage" value={`${metrics.sensorCoverage}%`} note="Live ops" tone="cyan" icon={<Radar size={16} />} />
+                      <Metric label="Utilization lift" value="+9%" note="Activation" tone="cyan" icon={<Building2 size={16} />} />
+                      <Metric label="Waste diversion" value="34%" note="Food ops" tone="navy" icon={<Coffee size={16} />} />
+                    </div>
+                  </Section>
+                </>
+              ) : null}
+
+              {expSub === "brand" ? (
+                <>
+                  <Section
+                    title="Talent and brand halo"
+                    sub="How the campus experience supports recruiting, retention, and client perception (mock)."
+                    right={<IconBadge tone="navy" icon={<Sparkles size={14} />} text="Halo" />}
+                  >
+                    <div className="metricGrid">
+                      <Metric label="Recruiting lift" value={`+${metrics.recruitingLift}%`} note="Attraction" tone="cyan" icon={<User size={16} />} />
+                      <Metric label="Offer accept" value={`+${metrics.offerAccept}%`} note="Conversion" tone="ok" icon={<BadgeCheck size={16} />} />
+                      <Metric label="Retention lift" value={`+${metrics.retentionLift}%`} note="12-month" tone="ok" icon={<Heart size={16} />} />
+                      <Metric label="Visitor briefings" value={`${metrics.visitorBriefings}/wk`} note="Exec demos" tone="navy" icon={<Briefcase size={16} />} />
+                      <Metric label="Amenity NPS" value={`+${metrics.amenityNps}`} note="Daily delight" tone="ok" icon={<Coffee size={16} />} />
+                      <Metric label="Moments shared" value={`${metrics.communityMoments}/wk`} note="Social proof" tone="navy" icon={<Send size={16} />} />
+                    </div>
+                  </Section>
+                </>
+              ) : null}
+            </>
+          ) : null}
+
+          {view === "space" ? (
+            <>
+              <Section
+                title="Utilization"
+                sub="Where demand concentrates. Used to tune neighborhoods and staffing (mock)."
+                right={<IconBadge tone="neutral" icon={<Building2 size={14} />} text="Live" />}
+              >
+                <div className="heatmap" style={{ marginTop: 0 }}>
+                  <HeatTile label="A" value={metrics.utilA} />
+                  <HeatTile label="B" value={metrics.utilB} />
+                  <HeatTile label="C" value={metrics.utilC} />
+                </div>
+              </Section>
+
+              <Section
+                title="Operations"
+                sub="Signals that keep the campus running smoothly (mock)."
+                right={<IconBadge tone="cyan" icon={<Radar size={14} />} text="Ops" />}
+              >
+                <div className="metricGrid">
+                  <Metric label="Desk match" value={`${metrics.deskMatch}%`} note="Right setup" tone="ok" icon={<Building2 size={16} />} />
+                  <Metric label="Room availability" value={`${metrics.roomAvailability}%`} note="Bookable" tone="cyan" icon={<BadgeCheck size={16} />} />
+                  <Metric label="Incidents" value={`${metrics.incidentsWk}/wk`} note="Reported" tone="warn" icon={<MessageSquare size={16} />} />
+                  <Metric label="Resolution" value="42m" note="Median" tone="cyan" icon={<Timer size={16} />} />
+                  <Metric label="Queue time" value="1.8m" note="Entry" tone="navy" icon={<Car size={16} />} />
+                  <Metric label="Comfort" value="4.6/5" note="Thermal" tone="ok" icon={<Heart size={16} />} />
+                </div>
+              </Section>
+            </>
+          ) : null}
+
+          {view === "network" ? (
+            <>
+              <Section
+                title="Private 5G performance"
+                sub="Supports routing, occupancy, reservations, and safety experiences (mock)."
+                right={<IconBadge tone="navy" icon={<Wifi size={14} />} text="5G" />}
+              >
+                <div className="metricGrid">
+                  <Metric label="Latency" value={`${metrics.latencyMs}ms`} note="P50" tone="cyan" icon={<Wifi size={16} />} />
+                  <Metric label="Reliability" value={`${metrics.reliability}%`} note="7-day" tone="ok" icon={<BadgeCheck size={16} />} />
+                  <Metric label="Sensor coverage" value={`${metrics.sensorCoverage}%`} note="Campus" tone="cyan" icon={<Radar size={16} />} />
+                  <Metric label="Failures" value={`${metrics.failureRate}%`} note="Edge" tone="warn" icon={<Wifi size={16} />} />
+                  <Metric label="Inference" value={`${metrics.inferenceMs}ms`} note="Realtime" tone="cyan" icon={<Timer size={16} />} />
+                  <Metric label="Forecast" value={`${metrics.forecastAcc}%`} note="Accuracy" tone="ok" icon={<Radar size={16} />} />
+                </div>
+              </Section>
+
+              <Section
+                title="Edge services"
+                sub="Real-time inference for crowd forecasting and wayfinding (mock)."
+                right={<IconBadge tone="cyan" icon={<Sparkles size={14} />} text="Edge" />}
+              >
+                <div className="metricGrid">
+                  <Metric label="Model refresh" value="2.5m" note="Cycle" tone="navy" icon={<Timer size={16} />} />
+                  <Metric label="Rollback" value="Instant" note="Safety" tone="navy" icon={<Shield size={16} />} />
+                  <Metric label="Cache hit" value="94%" note="Speed" tone="ok" icon={<Wifi size={16} />} />
+                  <Metric label="Routes/day" value="18k" note="Scale" tone="cyan" icon={<Navigation size={16} />} />
+                  <Metric label="Occupancy" value="Live" note="Sensors" tone="cyan" icon={<Radar size={16} />} />
+                  <Metric label="Privacy" value="Policy" note="Governed" tone="ok" icon={<Shield size={16} />} />
+                </div>
+              </Section>
+            </>
+          ) : null}
 
           <div className="scenarioFooter">
             <div className="scenarioLabel">Scenario</div>
@@ -1472,16 +1477,18 @@ function HeatBar({ label, value, suffix }: { label: string; value: number; suffi
 
 function HeatTile({ label, value }: { label: string; value: number }) {
   const v = clamp(value, 0, 100);
+  const tone = v < 25 ? "ok" : v < 70 ? "warn" : "bad";
+  const note = v < 25 ? "Under-used" : v < 70 ? "Balanced" : "High demand";
   return (
     <div className="tile">
       <div className="tile-top">
-        <div className="tile-lbl">Bldg {label}</div>
-        <IconBadge tone={v < 25 ? "ok" : v < 70 ? "warn" : "bad"} text={`${v}%`} />
+        <div className="tile-lbl">Building {label}</div>
+        <IconBadge tone={tone} text={`${v}%`} />
       </div>
       <div className="tile-bar">
         <div className="tile-fill" style={{ width: `${v}%`, background: pctColor(v) }} />
       </div>
-      <div className="tile-sub">Utilization</div>
+      <div className="tile-sub">{note}</div>
     </div>
   );
 }
@@ -1493,7 +1500,7 @@ function BottomNav({ tab, onChange }: { tab: TabKey; onChange: (t: TabKey) => vo
     { key: "map", label: "Map", icon: <MapIcon size={18} /> },
     { key: "schedule", label: "Schedule", icon: <Calendar size={18} /> },
     { key: "profile", label: "Profile", icon: <User size={18} /> },
-    { key: "admin", label: "Admin", icon: <Shield size={18} /> },
+    { key: "admin", label: "Admin", icon: <BarChart3 size={18} /> },
   ];
 
   return (
@@ -1514,7 +1521,7 @@ function BottomNav({ tab, onChange }: { tab: TabKey; onChange: (t: TabKey) => vo
 function Style() {
   return (
     <style>{`
-      :root { --navy: ${ATTNAVY}; --cyan: ${ATTCYAN}; }
+      :root { --navy: ${ATTNAVY}; --cyan: ${ATTCYAN}; --ok:#10B981; --warn:#F59E0B; --bad:#F43F5E; }
       *{ box-sizing:border-box; }
       html,body{ height:100%; }
       body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
@@ -1547,16 +1554,18 @@ function Style() {
       .brand-sub{ font-size:11px; color: var(--muted); margin-top:4px; line-height:1.25; }
       .top-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 
-      .main{ width:100%; flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling: touch; padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
+      .pulse{ width:100%; display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-start; margin-bottom:12px; }
+
+      .main{ width:100%; flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling: touch; padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
       .stack{ display:flex; flex-direction:column; gap:12px; }
 
       .card{ border-radius: 22px; background: var(--card); border: 1px solid var(--stroke); box-shadow: var(--shadow); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); overflow:hidden; }
       .card-hd{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:14px; }
-      .card-title{ font-weight:900; font-size:13px; letter-spacing:-0.01em; }
-      .card-sub{ font-size:11px; color: var(--muted); margin-top:3px; }
+      .card-title{ font-weight:1000; font-size:12px; letter-spacing:-0.01em; }
+      .card-sub{ font-size:10.5px; color: var(--muted); margin-top:3px; line-height:1.2; }
       .pad{ padding: 0 14px 14px; }
 
-      .badge{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; font-size:11px; font-weight:800; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); max-width: 100%; }
+      .badge{ display:inline-flex; align-items:center; gap:6px; padding:5px 9px; border-radius:999px; font-size:10px; font-weight:900; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); max-width: 100%; min-width:0; white-space:nowrap; }
       .badge-ic{ display:inline-flex; }
       .badge-neutral{ color: var(--text); }
       .badge-cyan{ background: rgba(0,168,224,0.16); color: var(--text); }
@@ -1568,6 +1577,7 @@ function Style() {
       .hello{ font-size:18px; font-weight:1000; letter-spacing:-0.03em; }
       .hello-sub{ font-size:12px; color: var(--muted); margin-top:4px; }
       .home-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+      .statePills{ margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
 
       .scenarioFooter{ margin-top: 12px; display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:10px; border-radius:18px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); max-width: 100%; }
       .scenarioLabel{ font-weight:1000; font-size:12px; color: var(--muted); flex: 0 0 auto; }
@@ -1580,21 +1590,27 @@ function Style() {
       .glassline{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border-radius:18px; border: 1px solid var(--stroke); background: rgba(255,255,255,0.10); }
       .glass-ic{ width:34px; height:34px; border-radius:14px; display:flex; align-items:center; justify-content:center; background: rgba(0,51,102,0.14); border:1px solid rgba(0,168,224,0.18); }
       .glass-txt{ flex:1; min-width:0; }
-      .glass-title{ font-size:12px; font-weight:1000; letter-spacing:-0.01em; }
-      .glass-sub{ font-size:11px; color: var(--muted); margin-top:2px; }
-      .glass-sub2{ font-size:11px; color: rgba(0,168,224,0.95); margin-top:4px; font-weight:800; }
+      .glass-title{ font-size:11px; font-weight:1000; letter-spacing:-0.01em; }
+      .glass-sub{ font-size:10.5px; color: var(--muted); margin-top:2px; line-height:1.2; word-break: break-word; }
+      .glass-sub2{ font-size:10px; color: rgba(0,168,224,0.95); margin-top:4px; font-weight:900; line-height:1.2; word-break: break-word; }
 
       .btn{ border:0; cursor:pointer; padding:10px 12px; border-radius:16px; font-weight:1000; font-size:12px; display:inline-flex; align-items:center; gap:8px; }
       .btn-ic{ display:inline-flex; }
       .btn-primary{ background: linear-gradient(135deg, rgba(0,168,224,0.95), rgba(0,51,102,0.95)); color:white; box-shadow: 0 10px 30px rgba(0,168,224,0.18); }
       .btn-secondary{ background: rgba(255,255,255,0.12); color: var(--text); border: 1px solid var(--stroke); }
-      .btn-ghost{ background: transparent; color: var(--text); border: 1px solid var(--stroke); }
 
-      .row2{ display:flex; gap:10px; margin-top:10px; }
-      .row2 .btn{ flex:1; justify-content:center; }
       .row3{ display:flex; gap:10px; margin-top:10px; }
       .row3 .btn{ flex:1; justify-content:center; }
       .hint{ margin-top:10px; font-size:11px; color: var(--muted); }
+
+      .whyBlock{ margin-top:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; overflow:hidden; }
+      .whyBtn{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border:0; background: transparent; color: var(--text); cursor:pointer; font-weight:1000; }
+      .whyTitle{ font-size:12px; }
+      .whyArrow{ transition: transform 200ms ease; color: var(--muted); }
+      .whyArrowOn{ transform: rotate(90deg); }
+      .whyPanel{ padding: 0 12px 12px; display:flex; flex-direction:column; gap:8px; }
+      .whyLine{ font-size:11px; color: var(--muted); font-weight:900; }
+      .whyKey{ color: var(--text); margin-right:8px; }
 
       .toggle{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border-radius:18px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); cursor:pointer; }
       .toggle-left{ display:flex; align-items:center; gap:10px; }
@@ -1617,14 +1633,28 @@ function Style() {
       .listtitle{ font-weight:1000; font-size:12px; }
       .listsub{ margin-top:4px; font-size:11px; color: var(--muted); }
 
-      /* Schedule (timeline) */
+      /* Home: work mode + onboarding */
+      .modebar{ margin-top:10px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
+      .mode-title{ font-weight:1000; font-size:12px; }
+      .modechips{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+      .modechip{ border:1px solid var(--stroke); background: rgba(255,255,255,0.08); color: var(--muted); font-weight:1000; font-size:11px; padding:6px 10px; border-radius:999px; cursor:pointer; }
+      .modechip-on{ background: rgba(0,168,224,0.16); color: var(--text); }
+
+      .checklist{ margin-top:10px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
+      .check-h{ font-weight:1000; font-size:12px; }
+      .check-item{ margin-top:8px; display:flex; align-items:center; gap:10px; font-size:11px; color: var(--muted); font-weight:900; }
+      .check-dot{ width:10px; height:10px; border-radius:999px; background: rgba(0,168,224,0.50); box-shadow: 0 0 0 6px rgba(0,168,224,0.12); }
+
+      /* Schedule: restored timeline layout */
       .schedTop{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:12px; border-radius:18px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); }
       .schedNowLbl{ font-weight:1000; font-size:11px; color: var(--muted); }
       .schedNowVal{ font-weight:1000; font-size:16px; letter-spacing:-0.02em; margin-top:4px; }
       .schedNowSub{ margin-top:6px; font-size:11px; color: var(--muted); line-height:1.3; }
       .schedPills{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+
       .timeline2{ position:relative; margin-top:12px; display:flex; flex-direction:column; gap:12px; }
       .tline{ position:absolute; left: 16px; top: 6px; bottom: 6px; width: 2px; background: rgba(0,168,224,0.18); border-radius:999px; }
+
       .ev{ display:flex; gap:12px; }
       .dotTime{ width: 100px; display:flex; align-items:flex-start; gap:10px; }
       .dotTime .dot{ width:10px; height:10px; border-radius:999px; background: rgba(0,168,224,0.50); box-shadow: 0 0 0 6px rgba(0,168,224,0.14); margin-top: 8px; }
@@ -1633,6 +1663,7 @@ function Style() {
       .timeCol{ display:flex; flex-direction:column; }
       .timeTop{ font-weight:1000; font-size:11px; }
       .timeBot{ margin-top:4px; font-weight:900; font-size:11px; color: var(--muted); }
+
       .evCard{ flex:1; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
       .evRow{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
       .evTitle{ font-weight:1000; font-size:12px; }
@@ -1640,76 +1671,24 @@ function Style() {
       .evMeta{ margin-top:6px; font-size:11px; color: rgba(0,168,224,0.95); font-weight:800; }
       .evActions{ margin-top:10px; display:flex; gap:10px; }
       .evActions .btn{ flex:1; justify-content:center; }
+
       .gapCard{ margin-left: 112px; border:1px solid var(--stroke); background: rgba(0,168,224,0.10); border-radius:18px; padding:12px; }
       .gapRow{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
       .gapTitle{ font-weight:1000; font-size:12px; }
       .gapSub{ margin-top:6px; font-size:11px; color: var(--muted); line-height:1.3; }
 
-      /* Profile */
-      .prefblock{ margin-top:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
-      .prefh{ font-weight:1000; font-size:12px; margin-bottom:10px; }
-      .plist{ display:flex; flex-direction:column; gap:10px; }
-      .prow{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border-radius:16px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); cursor:pointer; color: var(--text); }
-      .prow-on{ background: rgba(0,168,224,0.14); outline:2px solid rgba(0,168,224,0.22); }
-      .prow-left{ min-width:0; }
-      .prow-title{ font-weight:1000; font-size:12px; }
-      .prow-sub{ margin-top:4px; font-size:11px; color: var(--muted); line-height:1.25; }
-      .muted{ color: var(--muted); }
-
-      .slider{ margin-top:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
-      .slider-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-      .slider-title{ font-weight:1000; font-size:12px; }
-      .slider-sub{ margin-top:8px; font-size:11px; color: var(--muted); }
-      .range{ width:100%; margin-top:10px; }
-      .select{ width:100%; border-radius:14px; padding:10px 12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); color: var(--text); font-weight:900; }
-
-      /* Admin */
-      .mini-grid-3{ display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:10px; }
-      .mini{ display:flex; align-items:center; gap:10px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
-      .mini-ic{ width:34px; height:34px; border-radius:16px; display:flex; align-items:center; justify-content:center; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); }
-      .mini-cyan{ background: rgba(0,168,224,0.16); }
-      .mini-navy{ background: rgba(0,51,102,0.18); }
-      .mini-ok{ background: rgba(16,185,129,0.16); }
-      .mini-warn{ background: rgba(245,158,11,0.16); }
-      .mini-bad{ background: rgba(244,63,94,0.16); }
-      .mini-val{ font-weight:1000; font-size:13px; }
-      .mini-lbl{ margin-top:3px; font-size:10px; color: var(--muted); font-weight:900; }
-
-      .admin-card{ margin-top:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
-      .admin-h{ font-weight:1000; font-size:12px; }
-      .admin-sub{ margin-top:4px; font-size:11px; color: var(--muted); }
-      .heatmap{ margin-top:12px; display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; }
-      .tile{ border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
-      .tile-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-      .tile-lbl{ font-weight:1000; font-size:11px; color: var(--muted); }
+      /* Admin: tiles + heatmap restored */
+      .heatmap{ margin-top:12px; display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; width:100%; }
+      .tile{ border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; min-width:0; overflow:hidden; }
+      .tile-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+      .tile-lbl{ font-weight:1000; font-size:10px; color: var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .tile-bar{ margin-top:10px; height:10px; border-radius:999px; background: rgba(255,255,255,0.10); overflow:hidden; border:1px solid var(--stroke); }
       .tile-fill{ height:100%; border-radius:999px; }
-      .tile-sub{ margin-top:8px; font-size:10px; color: var(--muted); font-weight:900; }
+      .tile-sub{ margin-top:8px; font-size:9.5px; color: var(--muted); font-weight:900; }
 
-      .heatrow{ margin-top:12px; }
-      .heatrow-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-      .heatrow-lbl{ font-weight:1000; font-size:11px; color: var(--muted); }
-      .heatrow-val{ font-weight:1000; font-size:12px; }
-      .heatbar{ margin-top:8px; height:10px; border-radius:999px; background: rgba(255,255,255,0.10); overflow:hidden; border:1px solid var(--stroke); }
-      .heatfill{ height:100%; border-radius:999px; }
-
-      /* Work mode bar */
-      .modebar{ margin-top:10px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
-      .mode-title{ font-weight:1000; font-size:12px; }
-      .modechips{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-      .modechip{ border:1px solid var(--stroke); background: rgba(255,255,255,0.08); color: var(--muted); font-weight:1000; font-size:11px; padding:6px 10px; border-radius:999px; cursor:pointer; }
-      .modechip-on{ background: rgba(0,168,224,0.16); color: var(--text); }
-
-      .map{
-  position:relative;
-  width:100%;
-  aspect-ratio: 10/9;
-  border-radius:22px;
-  overflow:hidden;
-  border:1px solid var(--stroke);
-  background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06));
-}
-.map-grid{ position:absolute; inset:0; opacity:0.55;
+      .map{ position:relative; width:100%; aspect-ratio: 10/9; border-radius:22px; overflow:hidden; border:1px solid var(--stroke);
+            background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06)); }
+      .map-grid{ position:absolute; inset:0; opacity:0.55;
         background-image:
           linear-gradient(to right, rgba(148,163,184,0.18) 1px, transparent 1px),
           linear-gradient(to bottom, rgba(148,163,184,0.18) 1px, transparent 1px);
@@ -1728,15 +1707,12 @@ function Style() {
       .pin-mini{ padding:6px; gap:0; }
       .pin-on{ outline: 2px solid rgba(0,168,224,0.45); background: rgba(255,255,255,0.16); }
       .pin-dot{ width:10px; height:10px; border-radius:999px; box-shadow: 0 0 18px rgba(0,168,224,0.18); }
-      .pin-dot-on{ box-shadow: 0 0 26px rgba(0,168,224,0.28); }
       .pin-ttl{ font-size:11px; font-weight:1000; max-width: 130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .mapDetail{ margin-top: 10px; }
       .me{ position:absolute; transform: translate(-50%, -50%); display:flex; flex-direction:column; align-items:center; gap:6px; }
       .me-dot{ width:12px; height:12px; border-radius:999px; background: rgba(0,168,224,0.95); box-shadow: 0 0 0 8px rgba(0,168,224,0.18); }
       .me-tag{ font-size:10px; font-weight:1000; color: var(--muted); }
       .escort{ position:absolute; transform: translate(-50%, -50%); pointer-events:none; }
-      .escort-ring{ width:220px; height:220px; border-radius:999px; border: 2px solid rgba(0,168,224,0.34); box-shadow: 0 0 28px rgba(0,168,224,0.18);
-                    animation: pulse 1.6s ease-out infinite; }
+      .escort-ring{ width:220px; height:220px; border-radius:999px; border: 2px solid rgba(0,168,224,0.34); box-shadow: 0 0 28px rgba(0,168,224,0.18); animation: pulse 1.6s ease-out infinite; }
       .ring2{ width:320px; height:320px; position:absolute; left:50%; top:50%; transform: translate(-50%, -50%);
               border-color: rgba(0,168,224,0.18); animation-delay: 0.55s; }
       @keyframes pulse{ 0%{ transform: scale(0.88); opacity: 0.75; } 65%{ transform: scale(1.02); opacity: 0.28; } 100%{ transform: scale(1.08); opacity: 0.0; } }
@@ -1752,30 +1728,376 @@ function Style() {
       .navlbl{ line-height:1; }
 
       .fab{ position:absolute; right: 18px; bottom: calc(96px + env(safe-area-inset-bottom)); width: 52px; height: 52px; border-radius: 18px; border: 1px solid var(--stroke); background: rgba(0,51,102,0.18); color: var(--text); display:flex; align-items:center; justify-content:center; box-shadow: var(--shadow); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); cursor:pointer; }
-      .fab-on{ background: rgba(0,168,224,0.18); outline: 2px solid rgba(0,168,224,0.22); }
 
-      .sheetOverlay{ position:absolute; inset:0; z-index: 50; display:flex; align-items:flex-end; justify-content:center; }
-      .sheetBackdrop{ position:absolute; inset:0; background: rgba(2,6,23,0.45); border:0; }
-      .sheet{ width: calc(100% - 16px); max-width: 420px; margin: 0 auto 12px; border-radius: 24px; border: 1px solid var(--stroke);
-              background: var(--card); box-shadow: var(--shadow); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); overflow:hidden; }
-      .sheetHd{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding: 14px 14px 10px; }
-      .sheetHdTitle{ font-weight:1000; font-size:13px; }
-      .sheetHdSub{ margin-top:4px; font-size:11px; color: var(--muted); }
-      .sheetClose{ width:38px; height:38px; border-radius: 14px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); color: var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; }
-      .sheetBody{ padding: 0 14px 14px; display:flex; flex-direction:column; gap:10px; }
-      .sheetRow{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border-radius:18px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); }
-      .sheetLeft{ min-width:0; }
-      .sheetTitle{ font-weight:1000; font-size:12px; }
-      .sheetSub{ margin-top:4px; font-size:11px; color: var(--muted); }
-      .sheetActions{ display:flex; gap:10px; }
-      .sheetActions .btn{ flex:1; justify-content:center; }
-      .field{ display:flex; flex-direction:column; gap:8px; }
-      .fieldLbl{ font-weight:1000; font-size:12px; }
-      .textarea{ width:100%; border-radius: 14px; padding: 10px 12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); color: var(--text); font-weight:800; resize:none; }
+      .toast{ position:absolute; left:14px; right:14px; bottom: calc(96px + env(safe-area-inset-bottom) + 12px); border-radius:18px; border:1px solid var(--stroke);
+              background: rgba(15,23,42,0.55); color: rgba(255,255,255,0.92); box-shadow: 0 18px 45px rgba(0,0,0,0.25);
+              padding:12px; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+      .toastTitle{ font-weight:1000; font-size:12px; }
+      .toastBody{ margin-top:4px; font-size:10.5px; color: rgba(255,255,255,0.72); line-height:1.25; }
 
-      @media (prefers-reduced-motion: reduce){ .escort-ring{ animation: none; } }
+      .prefblock{ margin-top:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
+      .prefh{ font-weight:1000; font-size:12px; margin-bottom:10px; }
+      .plist{ display:flex; flex-direction:column; gap:10px; }
+      .prow{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border-radius:16px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); cursor:pointer; color: var(--text); }
+      .prow-on{ background: rgba(0,168,224,0.14); outline:2px solid rgba(0,168,224,0.22); }
+      .prow-title{ font-weight:1000; font-size:12px; }
+      .prow-sub{ margin-top:4px; font-size:11px; color: var(--muted); line-height:1.25; }
+      .muted{ color: var(--muted); }
+      .slider{ margin-top:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; }
+      .slider-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .slider-title{ font-weight:1000; font-size:12px; }
+      .slider-sub{ margin-top:8px; font-size:11px; color: var(--muted); }
+      .range{ width:100%; margin-top:10px; }
+      .select{ width:100%; border-radius:14px; padding:10px 12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); color: var(--text); font-weight:900; }
+
+      .mini-grid-3{ display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; margin-top:10px; width:100%; }
+      .mini{ display:flex; align-items:flex-start; gap:10px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:10px; min-width:0; overflow:hidden; }
+      .mini-ic{ width:34px; height:34px; border-radius:16px; display:flex; align-items:center; justify-content:center; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); flex: 0 0 auto; }
+      .mini-val{ font-weight:1000; font-size:12px; white-space:nowrap; }
+      .mini-lbl{ margin-top:3px; font-size:9.5px; color: var(--muted); font-weight:900; line-height:1.15; white-space:normal; word-break: break-word; }
+
+      @media (max-width: 420px){
+        /* On iPhone-width, keep everything inside cards */
+        .mini-grid-3{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .heatmap{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .badge{ font-size:9.5px; padding:5px 8px; }
+      }
+
+      .admin-card{ margin-top:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; overflow:hidden; }
+      .admin-note{ margin-top:8px; font-size:9.5px; color: var(--muted); line-height:1.2; font-weight:900; }
+      .admin-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+      .admin-head > div{ flex: 1 1 auto; min-width: 0; }
+      .admin-head .badge{ flex:0 0 auto; }
+      .admin-h{ font-weight:1000; font-size:11px; letter-spacing:-0.01em; }
+      .admin-sub{ margin-top:5px; font-size:10px; color: var(--muted); line-height:1.2; word-break: break-word; }
+
+      .adminSeg{ display:flex; gap:8px; padding:8px; border-radius:18px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); margin-top: 2px; }
+      .adminSegBtn{ flex:1; border:0; background: transparent; color: var(--muted); font-weight:1000; font-size:10px; padding:8px 8px; border-radius:14px; cursor:pointer; }
+      .adminSegOn{ background: rgba(0,168,224,0.16); color: var(--text); }
+
+      .mini-grid-2{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; width:100%; margin-top: 10px; }
+
+      .heroGrid{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; width:100%; margin-top: 10px; }
+      .hero{ border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; overflow:hidden; }
+      .heroRow{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .heroTitle{ font-weight:1000; font-size:10px; color: var(--muted); }
+      .heroVal{ margin-top:8px; font-weight:1000; font-size:20px; letter-spacing:-0.03em; }
+      .heroSub{ margin-top:6px; font-size:10px; color: var(--muted); line-height:1.2; }
+
+      .metricGrid{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; width:100%; }
+      .metric{ border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:12px; overflow:hidden; min-width:0; }
+      .metricTop{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .metricIc{ width:32px; height:32px; border-radius:16px; border:1px solid var(--stroke); background: rgba(0,168,224,0.10); display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+      .metricVal{ font-weight:1000; font-size:14px; letter-spacing:-0.02em; white-space:nowrap; }
+      .metricLbl{ margin-top:6px; font-size:10px; color: var(--muted); font-weight:1000; line-height:1.15; }
+      .metricNote{ margin-top:4px; font-size:9.5px; color: rgba(0,168,224,0.95); font-weight:900; line-height:1.15; }
+      .metric-cyan .metricIc{ background: rgba(0,168,224,0.14); }
+      .metric-navy .metricIc{ background: rgba(0,51,102,0.14); }
+      .metric-ok .metricIc{ background: rgba(16,185,129,0.14); }
+      .metric-warn .metricIc{ background: rgba(245,158,11,0.14); }
+      .metric-bad .metricIc{ background: rgba(244,63,94,0.14); }
+
+      .subSeg{ display:flex; gap:8px; padding:8px; border-radius:18px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); margin-top: 10px; }
+      .subSegBtn{ flex:1; border:0; background: transparent; color: var(--muted); font-weight:1000; font-size:10px; padding:8px 8px; border-radius:14px; cursor:pointer; }
+      .subSegOn{ background: rgba(0,168,224,0.16); color: var(--text); }
+
+      @media (max-width: 420px){
+        .heroVal{ font-size:18px; }
+      }
+      
+      .heatrow{ margin-top:10px; }
+      .heatrow-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .heatrow-lbl{ font-weight:1000; font-size:10px; color: var(--muted); }
+      .heatrow-val{ font-weight:1000; font-size:11px; }
+      .heatbar{ margin-top:8px; height:10px; border-radius:999px; background: rgba(255,255,255,0.10); overflow:hidden; border:1px solid var(--stroke); }
+      .heatfill{ height:100%; border-radius:999px; }
+
+      :root{ --bg: radial-gradient(1200px 700px at 20% 0%, rgba(0,168,224,0.08), transparent 55%),
+                    radial-gradient(1200px 700px at 80% 10%, rgba(0,51,102,0.08), transparent 55%),
+                    linear-gradient(180deg, #FFFFFF, #F3F8FC);
+              --text: rgba(2,6,23,0.92); --muted: rgba(2,6,23,0.55);
+              --card: rgba(255,255,255,0.60); --stroke: rgba(148,163,184,0.42);
+              --shadow: 0 18px 45px rgba(2,6,23,0.10);
+      }
     `}</style>
   );
 }
+
+function Card({ children }: { children: React.ReactNode }) {
+  return <div className="card">{children}</div>;
+}
+
+function CardHeader({ title, subtitle, right }: { title: string; subtitle?: string; right?: React.ReactNode }) {
+  return (
+    <div className="card-hd">
+      <div>
+        <div className="card-title">{title}</div>
+        {subtitle ? <div className="card-sub">{subtitle}</div> : null}
+      </div>
+      {right ? <div className="top-right">{right}</div> : null}
+    </div>
+  );
+}
+
+function IconBadge({ tone, text, icon }: { tone: "neutral" | "cyan" | "navy" | "ok" | "warn" | "bad"; text: string; icon?: React.ReactNode }) {
+  return (
+    <span className={cx("badge", `badge-${tone}`)}>
+      {icon ? <span className="badge-ic">{icon}</span> : null}
+      <span>{text}</span>
+    </span>
+  );
+}
+
+function Button({ children, onClick, variant = "primary", left }: { children: React.ReactNode; onClick?: () => void; variant?: "primary" | "secondary"; left?: React.ReactNode }) {
+  return (
+    <button className={cx("btn", `btn-${variant}`)} onClick={onClick} type="button">
+      {left ? <span className="btn-ic">{left}</span> : null}
+      <span>{children}</span>
+    </button>
+  );
+}
+
+function Toggle({ label, value, onChange, icon }: { label: string; value: boolean; onChange: (v: boolean) => void; icon?: React.ReactNode }) {
+  return (
+    <button className="toggle" onClick={() => onChange(!value)} type="button">
+      <div className="toggle-left">
+        {icon ? <div className="toggle-ic">{icon}</div> : null}
+        <div className="toggle-label">{label}</div>
+      </div>
+      <div className={cx("toggle-pill", value && "toggle-on")}>
+        <div className={cx("toggle-dot", value && "toggle-dot-on")} />
+      </div>
+    </button>
+  );
+}
+
+function ScenarioPicker({ value, onChange }: { value: ScenarioKey; onChange: (k: ScenarioKey) => void }) {
+  return (
+    <div className="scenarioCtl">
+      <div className="seg" aria-label="scenario picker">
+        {SCENARIOS.map((s) => {
+          const on = s.key === value;
+          return (
+            <button key={s.key} className={cx("segbtn", on && "segon")} onClick={() => onChange(s.key)} type="button">
+              {s.key.toUpperCase()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PulseBar({ prefs }: { prefs: Preferences }) {
+  const campusBuzz = Math.round(CAMPUS_POIS.reduce((a, p) => a + p.buzz, 0) / CAMPUS_POIS.length);
+  const quiet = [...CAMPUS_POIS].filter((p) => p.kind === "workspace").sort((a, b) => b.quiet - a.quiet)[0];
+  const coffee = [...AMENITIES].filter((a) => a.kind === "coffee" && a.open).sort((a, b) => a.waitMins - b.waitMins)[0];
+  return (
+    <div className="pulse">
+      <IconBadge tone="neutral" icon={<Flame size={14} />} text={`Buzz ${campusBuzz}/100`} />
+      <IconBadge tone="cyan" icon={<Building2 size={14} />} text={`${quiet.name} • ${quiet.availability}% open`} />
+      <IconBadge tone="navy" icon={<Coffee size={14} />} text={`${coffee.name} • ${coffee.waitMins}m`} />
+      <IconBadge tone="neutral" icon={<User size={14} />} text={prefs.socialInsights ? "Social on" : "Social off"} />
+    </div>
+  );
+}
+
+function MiniStat({ label, value, icon, tone }: { label: string; value: string; icon: React.ReactNode; tone: "cyan" | "navy" | "ok" | "warn" | "bad" }) {
+  return (
+    <div className="mini">
+      <div className="mini-ic">{icon}</div>
+      <div>
+        <div className="mini-val">{value}</div>
+        <div className="mini-lbl">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [tab, setTab] = useState<TabKey>("home");
+  const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("s1");
+  const [securityMode, setSecurityMode] = useState(false);
+  const [sheet, setSheet] = useState<SheetKey>(null);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [arrivalStaged, setArrivalStaged] = useState(false);
+
+  const scenario = useMemo(() => SCENARIOS.find((s) => s.key === scenarioKey)!, [scenarioKey]);
+
+  const [prefs, setPrefs] = useState<Preferences>({
+    persona: "exec",
+    needsEV: true,
+    accessibility: false,
+    walkingToleranceMins: 10,
+    lowStimulus: false,
+    quietPreference: false,
+    favoriteOrder: "Brisket bowl",
+    socialInsights: true,
+  });
+
+  useEffect(() => {
+    setArrivalStaged(false);
+    setSecurityMode(scenarioKey === "s6" ? true : securityMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenarioKey]);
+
+  const effectivePrefs = useMemo(() => {
+    const persona = PERSONAS.find((p) => p.key === prefs.persona);
+    return { ...prefs, ...(persona?.defaults ?? {}) };
+  }, [prefs]);
+
+  const now = scenario.now;
+  const upcoming = nextEvent(now, CALENDAR);
+  const nextBldg: BuildingCode = upcoming?.bldg ?? "B";
+
+  const rankedGarages = rankGarages({ garages: GARAGES, nextBldg, prefs: effectivePrefs });
+  const recommendedGarage = rankedGarages[0];
+  const backupGarage = rankedGarages[1];
+
+  const rankedWorkspaces = rankWorkspaces({ workspaces: WORKSPACES, mode: scenario.key === "s3" ? scenario.workMode : scenario.workMode, prefs: effectivePrefs, nextBldg });
+  const recommendedWorkspace = rankedWorkspaces[0]
+    ? { ...rankedWorkspaces[0], walkFromGarage: recommendedGarage ? recommendedGarage.walk : 6 }
+    : undefined;
+
+  const coffee = pickAmenity("coffee", nextBldg);
+  const breakfast = pickAmenity("breakfast", nextBldg);
+  const lunch = pickAmenity("lunch", nextBldg);
+  const wellness = pickAmenity("wellness", nextBldg);
+
+  const themeVars: React.CSSProperties = useMemo(() => {
+    if (!securityMode) return {};
+    return {
+      // dark security mode tint
+      // @ts-ignore
+      "--bg": "radial-gradient(900px 600px at 50% 0%, rgba(0,168,224,0.10), transparent 60%), linear-gradient(180deg, #050B14, #0A1220)",
+      // @ts-ignore
+      "--text": "rgba(255,255,255,0.92)",
+      // @ts-ignore
+      "--muted": "rgba(255,255,255,0.62)",
+      // @ts-ignore
+      "--card": "rgba(15,23,42,0.55)",
+      // @ts-ignore
+      "--stroke": "rgba(148,163,184,0.25)",
+      // @ts-ignore
+      "--shadow": "0 18px 45px rgba(0,0,0,0.35)",
+    };
+  }, [securityMode]);
+
+  const showToast = (title: string, body: string) => {
+    setToast({ title, body });
+    window.setTimeout(() => setToast(null), 2400);
+  };
+
+  return (
+    <div className="shell" style={themeVars}>
+      <Style />
+      <header className="top">
+        <div className="brand">
+          <div className="brand-mark">
+            <div className="dot" />
+            <div className="dot dot2" />
+          </div>
+          <div>
+            <div className="brand-title">AT&amp;T Campus Companion</div>
+            <div className="brand-sub">Executive demo • Future campus experience</div>
+          </div>
+        </div>
+        <div className="top-right">
+          <IconBadge tone="navy" icon={<Calendar size={14} />} text={formatTime(now)} />
+          {effectivePrefs.accessibility ? <IconBadge tone="neutral" icon={<BadgeCheck size={14} />} text="Accessible" /> : null}
+        </div>
+      </header>
+
+      <PulseBar prefs={effectivePrefs} />
+
+      <main className="main">
+        {tab === "home" ? (
+          <HomeTab
+            scenario={scenario}
+            scenarioKey={scenarioKey}
+            onScenario={setScenarioKey}
+            onReportIssue={() => setSheet("issue")}
+            onAction={showToast}
+            socialOn={effectivePrefs.socialInsights}
+            arrivalStaged={arrivalStaged}
+            onStartArrival={() => setArrivalStaged(true)}
+            workMode={scenario.workMode}
+            onWorkMode={() => setTab("home")}
+            onGoExplore={() => setTab("explore")}
+            onGoMap={() => setTab("map")}
+            onGoSchedule={() => setTab("schedule")}
+            upcoming={upcoming}
+            now={now}
+            recommendedGarage={recommendedGarage}
+            backupGarage={backupGarage}
+            recommendedWorkspace={recommendedWorkspace}
+            coffee={coffee}
+            breakfast={breakfast}
+            lunch={lunch}
+            wellness={wellness}
+          />
+        ) : null}
+
+        {tab === "explore" ? (
+          <ExploreTab scenarioKey={scenarioKey} onScenario={setScenarioKey} prefs={effectivePrefs} onGoMap={() => setTab("map")} />
+        ) : null}
+
+        {tab === "map" ? (
+          <MapTab
+            securityMode={securityMode}
+            accessibleOn={effectivePrefs.accessibility}
+            selectedPoi={null}
+            onSelectPoi={() => null}
+            route={buildRoutePoints({ garage: recommendedGarage?.garage, workspace: recommendedWorkspace?.workspace, meetingBldg: nextBldg })}
+            scenarioKey={scenarioKey}
+            onScenario={setScenarioKey}
+          />
+        ) : null}
+
+        {tab === "schedule" ? <ScheduleTab now={now} scenarioKey={scenarioKey} onScenario={setScenarioKey} events={CALENDAR} /> : null}
+
+        {tab === "profile" ? (
+          <ProfileTab
+            prefs={prefs}
+            onPrefs={setPrefs}
+            personaKey={prefs.persona}
+            onPersona={(k) => {
+              const persona = PERSONAS.find((x) => x.key === k);
+              setPrefs((p) => ({ ...p, persona: k, ...(persona?.defaults ?? {}) }));
+            }}
+            scenarioKey={scenarioKey}
+            onScenario={setScenarioKey}
+          />
+        ) : null}
+
+        {tab === "admin" ? <AdminTab scenarioKey={scenarioKey} onScenario={setScenarioKey} /> : null}
+      </main>
+
+      <button className="fab" onClick={() => setSecurityMode((v) => !v)} type="button" aria-label="Toggle security mode">
+        <Shield size={18} />
+      </button>
+
+      <BottomNav tab={tab} onChange={setTab} />
+
+      {toast ? (
+        <div className="toast" role="status" aria-live="polite" onClick={() => setToast(null)}>
+          <div className="toastTitle">{toast.title}</div>
+          <div className="toastBody">{toast.body}</div>
+        </div>
+      ) : null}
+
+      {sheet === "issue" ? (
+        <div className="card" style={{ position: "absolute", left: 14, right: 14, bottom: 110, padding: 14 }}>
+          <div className="card-title">Report issue</div>
+          <div className="card-sub" style={{ marginTop: 6 }}>Mock form placeholder</div>
+          <div className="row3">
+            <Button variant="secondary" onClick={() => setSheet(null)} left={<X size={16} />}>Close</Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 
 

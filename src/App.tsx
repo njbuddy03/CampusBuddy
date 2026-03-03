@@ -20,9 +20,7 @@ import {
   Phone,
   Radar,
   Send,
-  Shield,
-  SlidersHorizontal,
-  Sparkles,
+  Shield,  Sparkles,
   Timer,
   User,
   Wifi,
@@ -2375,7 +2373,6 @@ export default function App() {
     </div>
   );
 }
-
 
 
 

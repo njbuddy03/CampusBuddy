@@ -2,14 +2,15 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BadgeCheck,
+  BarChart3,
   Bell,
   Briefcase,
   Building2,
   Calendar,
   Car,
   ChevronRight,
-  Compass,
   Coffee,
+  Compass,
   Flame,
   Heart,
   Home,
@@ -20,12 +21,12 @@ import {
   Radar,
   Send,
   Shield,
+  SlidersHorizontal,
   Sparkles,
   Timer,
   User,
   Wifi,
   X,
-  BarChart3,
 } from "lucide-react";
 
 /**
@@ -1492,7 +1493,16 @@ function Style() {
       .brand-title{ font-size:14px; font-weight:900; letter-spacing:-0.02em; line-height:1.1; }
       .brand-sub{ font-size:11px; color: var(--muted); margin-top:4px; line-height:1.25; }
       .top-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+      .top-rightHeader{ flex-wrap:nowrap; gap:6px; }
+
+      .iconGroup{ display:flex; gap:6px; padding:4px; border-radius:16px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); }
+      .iconMini{ width:30px; height:30px; border-radius:12px; border:0; background: rgba(255,255,255,0.12); color: var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+      .iconMini svg{ display:block; stroke: currentColor; }
+      .iconMiniOn{ background: rgba(0,168,224,0.16); outline: 2px solid rgba(0,168,224,0.22); }
+
+      /* legacy iconBtn kept for any other usage */
       .iconBtn{ width:34px; height:34px; border-radius:14px; border:1px solid var(--stroke); background: rgba(255,255,255,0.12); color: var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+      .iconBtn svg{ display:block; stroke: currentColor; }
       .iconBtnOn{ background: rgba(0,168,224,0.16); outline: 2px solid rgba(0,168,224,0.22); }
 
       .pulse{ width:100%; display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-start; margin-bottom:12px; }
@@ -1959,15 +1969,18 @@ export default function App() {
             <div className="brand-sub">Executive demo • Future campus experience</div>
           </div>
         </div>
-        <div className="top-right">
+        <div className="top-right top-rightHeader">
           <IconBadge tone="navy" icon={<Calendar size={14} />} text={formatTime(now)} />
           {effectivePrefs.accessibility ? <IconBadge tone="neutral" icon={<BadgeCheck size={14} />} text="Accessible" /> : null}
-          <button className="iconBtn" type="button" onClick={() => setSheet("notify")} aria-label="Notifications">
-            <Bell size={16} />
-          </button>
-          <button className={cx("iconBtn", kioskMode && "iconBtnOn")} type="button" onClick={() => setSheet("demo")} aria-label="Demo controls">
-            <Sparkles size={16} />
-          </button>
+
+          <div className="iconGroup" aria-label="Top actions">
+            <button className="iconMini" type="button" onClick={() => setSheet("notify")} aria-label="Notifications">
+              <Bell size={14} />
+            </button>
+            <button className={cx("iconMini", kioskMode && "iconMiniOn")} type="button" onClick={() => setSheet("demo")} aria-label="Demo controls">
+              <SlidersHorizontal size={14} />
+            </button>
+          </div>
         </div>
       </header>
 

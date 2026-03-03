@@ -41,7 +41,7 @@ import {
 
 type TabKey = "home" | "explore" | "map" | "schedule" | "profile" | "admin";
 type ScenarioKey = "s1" | "s2" | "s3" | "s4" | "s5" | "s6";
-type SheetKey = null | "security" | "issue";
+type SheetKey = null | "security" | "issue" | "notify" | "share" | "demo";
 
 type ToastState = null | { title: string; body: string };
 type BuildingCode = "A" | "B" | "C";
@@ -235,7 +235,10 @@ function rankGarages(args: { garages: Garage[]; nextBldg: BuildingCode; prefs: P
       const availabilityPct = (g.available / g.total) * 100;
       const evBoost = prefs.needsEV ? g.evAvailable * 1.2 : 0;
       const accBoost = prefs.accessibility ? g.accessibleAvailable * 1.6 : 0;
-      const score = availabilityPct * 0.7 + evBoost + accBoost - walk * 8;
+      const withinWalk = walk <= prefs.walkingToleranceMins;
+      const walkPenalty = withinWalk ? 0 : (walk - prefs.walkingToleranceMins) * 14;
+      const walkBonus = withinWalk ? 18 : 0;
+      const score = availabilityPct * 0.7 + evBoost + accBoost + walkBonus - walk * 8 - walkPenalty;
       const whyParts = [
         `Closest to Building ${nextBldg} (${walk} min)`,
         `${g.available} spots`,
@@ -252,7 +255,7 @@ function rankWorkspaces(args: { workspaces: Workspace[]; mode: WorkMode; prefs: 
   return [...workspaces]
     .map((w) => {
       const modeFit = w.modeFit.includes(mode) ? 1 : 0;
-      const quietBoost = (prefs.quietPreference || prefs.lowStimulus) ? w.quiet * 0.6 : w.quiet * 0.25;
+      const quietBoost = prefs.quietPreference || prefs.lowStimulus ? w.quiet * 0.6 : w.quiet * 0.25;
       const nearBoost = w.bldg === nextBldg ? 18 : 0;
       const featuresBoost = (w.hasDualMonitors ? 6 : 0) + (w.hasWhiteboard && mode === "Collaboration" ? 8 : 0);
       const score = modeFit * 40 + quietBoost + nearBoost + featuresBoost;
@@ -284,6 +287,8 @@ function HomeTab(props: {
   scenarioKey: ScenarioKey;
   onScenario: (k: ScenarioKey) => void;
   onReportIssue: () => void;
+  kioskMode: boolean;
+  onShareMoment: () => void;
   onAction: (title: string, body: string) => void;
   socialOn: boolean;
   arrivalStaged: boolean;
@@ -308,6 +313,8 @@ function HomeTab(props: {
     scenarioKey,
     onScenario,
     onReportIssue,
+    kioskMode,
+    onShareMoment,
     onAction,
     socialOn,
     arrivalStaged,
@@ -369,10 +376,7 @@ function HomeTab(props: {
                 left={<ChevronRight size={16} />}
                 onClick={() => {
                   onStartArrival();
-                  onAction(
-                    "Arrival staged",
-                    "Mock: parking confirmed, workspace held, route queued, and coffee added. Future: reservations + badge + payment."
-                  );
+                  onAction("Arrival staged", "Mock: parking confirmed, workspace held, route queued, and coffee added. Future: reservations + badge + payment.");
                 }}
               >
                 {arrivalStaged ? "Staged" : "Start"}
@@ -388,13 +392,7 @@ function HomeTab(props: {
                 <div className="glass-sub">Sarah (Mentor) is at The Grove.</div>
                 <div className="glass-sub2">15-minute coffee catch-up fits your window.</div>
               </div>
-              <Button
-                variant="secondary"
-                left={<Coffee size={16} />}
-                onClick={() => onAction("Invite sent", "Mock: invite sent. Future: availability + auto-booking.")}
-              >
-                Invite
-              </Button>
+              <Button variant="secondary" left={<Coffee size={16} />} onClick={() => onAction("Invite sent", "Mock: invite sent. Future: availability + auto-booking.")}>Invite</Button>
             </div>
           ) : null}
 
@@ -429,16 +427,7 @@ function HomeTab(props: {
                   <div className="glass-sub">15-minute mini tours for productivity, wellness, food, and innovation.</div>
                   <div className="glass-sub2">Start with one tap.</div>
                 </div>
-                <Button
-                  variant="secondary"
-                  left={<ChevronRight size={16} />}
-                  onClick={() => {
-                    onGoExplore();
-                    onAction("Discovery", "Mock: starting a guided campus tour. Future: indoor wayfinding + narration.");
-                  }}
-                >
-                  Start
-                </Button>
+                <Button variant="secondary" left={<ChevronRight size={16} />} onClick={() => { onGoExplore(); onAction("Discovery", "Mock: starting a guided campus tour. Future: indoor wayfinding + narration."); }}>Start</Button>
               </div>
 
               <div className="checklist">
@@ -447,6 +436,10 @@ function HomeTab(props: {
                 <div className="check-item"><span className="check-dot" />Find 3 quiet focus spaces</div>
                 <div className="check-item"><span className="check-dot" />Pick a go-to coffee spot</div>
                 <div className="check-item"><span className="check-dot" />Take a 10-minute campus loop</div>
+              </div>
+
+              <div className="row3" style={{ marginTop: 10 }}>
+                <Button variant="secondary" left={<Send size={16} />} onClick={() => { onShareMoment(); onAction("Campus moment", "Mock: open a share card with caption suggestions and privacy controls."); }}>Share moment</Button>
               </div>
             </>
           ) : null}
@@ -467,16 +460,7 @@ function HomeTab(props: {
                     </div>
                     <div className="glass-sub2">{recommendedGarage ? recommendedGarage.why : ""}</div>
                   </div>
-                  <Button
-                    variant="secondary"
-                    left={<Navigation size={16} />}
-                    onClick={() => {
-                      onGoMap();
-                      onAction("Route prepared", "Mock: routing to next stop. Future: turn-by-turn + accessibility.");
-                    }}
-                  >
-                    Route
-                  </Button>
+                  <Button variant="secondary" left={<Navigation size={16} />} onClick={() => { onGoMap(); onAction("Route prepared", "Mock: routing to next stop. Future: turn-by-turn + accessibility."); }}>Route</Button>
                 </div>
 
                 {backupGarage ? (
@@ -487,16 +471,7 @@ function HomeTab(props: {
                       <div className="glass-sub">{backupGarage.garage.name} • {backupGarage.garage.available} spots • {backupGarage.walk} min</div>
                       <div className="glass-sub2">{backupGarage.why}</div>
                     </div>
-                    <Button
-                      variant="secondary"
-                      left={<ChevronRight size={16} />}
-                      onClick={() => {
-                        onGoMap();
-                        onAction("Alternate selected", "Mock: switched to backup garage. Future: auto-reserve EV/accessible bay.");
-                      }}
-                    >
-                      Use
-                    </Button>
+                    <Button variant="secondary" left={<ChevronRight size={16} />} onClick={() => { onGoMap(); onAction("Alternate selected", "Mock: switched to backup garage. Future: auto-reserve EV/accessible bay."); }}>Use</Button>
                   </div>
                 ) : null}
               </>
@@ -513,13 +488,7 @@ function HomeTab(props: {
                 </div>
                 <div className="glass-sub2">{recommendedWorkspace ? recommendedWorkspace.why : ""}</div>
               </div>
-              <Button
-                variant="secondary"
-                left={<ChevronRight size={16} />}
-                onClick={() => onAction("Workspace held", "Mock: workspace held. Future: reservations + badge access.")}
-              >
-                Hold
-              </Button>
+              <Button variant="secondary" left={<ChevronRight size={16} />} onClick={() => onAction("Workspace held", "Mock: workspace held. Future: reservations + badge access.")}>Hold</Button>
             </div>
 
             <div className="glassline">
@@ -533,16 +502,7 @@ function HomeTab(props: {
                 </div>
                 <div className="glass-sub2">{upcoming ? `Leave in ${Math.max(0, minutesToMeeting - 6)} min` : ""}</div>
               </div>
-              <Button
-                variant="secondary"
-                left={<ChevronRight size={16} />}
-                onClick={() => {
-                  onGoSchedule();
-                  onAction("Schedule", "Mock: opening timeline with leave-time nudges.");
-                }}
-              >
-                View
-              </Button>
+              <Button variant="secondary" left={<ChevronRight size={16} />} onClick={() => { onGoSchedule(); onAction("Schedule", "Mock: opening timeline with leave-time nudges."); }}>View</Button>
             </div>
 
             <div className="glassline">
@@ -550,17 +510,9 @@ function HomeTab(props: {
               <div className="glass-txt">
                 <div className="glass-title">{foodLabel}</div>
                 <div className="glass-sub">{foodPick ? `${foodPick.name} • wait ${foodPick.waitMins} min` : ""}</div>
-                <div className="glass-sub2">
-                  {freeTimeMode ? "Fits your time window." : foodPick && foodPick.waitMins >= 6 ? "Forecast: wait may spike soon." : "Low wait, near next stop."}
-                </div>
+                <div className="glass-sub2">{freeTimeMode ? "Fits your time window." : foodPick && foodPick.waitMins >= 6 ? "Forecast: wait may spike soon." : "Low wait, near next stop."}</div>
               </div>
-              <Button
-                variant="secondary"
-                left={<Bell size={16} />}
-                onClick={() => onAction("Order placed", "Mock: order queued. Future: payment + pickup QR.")}
-              >
-                Order
-              </Button>
+              <Button variant="secondary" left={<Bell size={16} />} onClick={() => onAction("Order placed", "Mock: order queued. Future: payment + pickup QR.")}>Order</Button>
             </div>
 
             {freeTimeMode && wellness ? (
@@ -571,16 +523,7 @@ function HomeTab(props: {
                   <div className="glass-sub">{wellness.name} • 8-minute reset</div>
                   <div className="glass-sub2">Time-optimized.</div>
                 </div>
-                <Button
-                  variant="secondary"
-                  left={<ChevronRight size={16} />}
-                  onClick={() => {
-                    onGoMap();
-                    onAction("Wellness route", "Mock: routing to wellness. Future: occupancy + coach mode.");
-                  }}
-                >
-                  Go
-                </Button>
+                <Button variant="secondary" left={<ChevronRight size={16} />} onClick={() => { onGoMap(); onAction("Wellness route", "Mock: routing to wellness. Future: occupancy + coach mode."); }}>Go</Button>
               </div>
             ) : null}
 
@@ -592,16 +535,7 @@ function HomeTab(props: {
                   <div className="glass-sub">Meetings + free windows + stops.</div>
                   <div className="glass-sub2">One timeline.</div>
                 </div>
-                <Button
-                  variant="secondary"
-                  left={<ChevronRight size={16} />}
-                  onClick={() => {
-                    onGoSchedule();
-                    onAction("Day plan", "Mock: opening day orchestration view.");
-                  }}
-                >
-                  Open
-                </Button>
+                <Button variant="secondary" left={<ChevronRight size={16} />} onClick={() => { onGoSchedule(); onAction("Day plan", "Mock: opening day orchestration view."); }}>Open</Button>
               </div>
             ) : null}
           </div>
@@ -620,16 +554,15 @@ function HomeTab(props: {
             ) : null}
           </div>
 
-          <div className="scenarioFooter">
-            <div className="scenarioLabel">Scenario</div>
-            <ScenarioPicker value={scenarioKey} onChange={onScenario} />
-          </div>
+          {!kioskMode ? (
+            <div className="scenarioFooter">
+              <div className="scenarioLabel">Scenario</div>
+              <ScenarioPicker value={scenarioKey} onChange={onScenario} />
+            </div>
+          ) : null}
 
           <div className="row3" style={{ marginTop: 12 }}>
-            <Button variant="secondary" left={<MessageSquare size={16} />} onClick={() => {
-              onReportIssue();
-              onAction("Report issue", "Mock: issue form opens. Future: auto-location + photo + routing to facilities/security.");
-            }}>Report issue</Button>
+            <Button variant="secondary" left={<MessageSquare size={16} />} onClick={() => { onReportIssue(); onAction("Report issue", "Mock: issue form opens. Future: auto-location + photo + routing to facilities/security."); }}>Report issue</Button>
           </div>
         </div>
       </Card>
@@ -642,11 +575,13 @@ function ExploreTab({
   onScenario,
   prefs,
   onGoMap,
+  kioskMode,
 }: {
   scenarioKey: ScenarioKey;
   onScenario: (k: ScenarioKey) => void;
   prefs: Preferences;
   onGoMap: () => void;
+  kioskMode: boolean;
 }) {
   type ExploreFilter = "spaces" | "parking" | "coffee" | "food" | "wellness";
   const [filter, setFilter] = useState<ExploreFilter>("spaces");
@@ -660,7 +595,6 @@ function ExploreTab({
   ];
 
   const listItems = useMemo(() => {
-    // spaces
     if (filter === "spaces") {
       const items = [...CAMPUS_POIS]
         .filter((p) => p.kind === "workspace" || p.kind === "space")
@@ -673,7 +607,6 @@ function ExploreTab({
       }));
     }
 
-    // parking
     if (filter === "parking") {
       const items = [...GARAGES].sort((a, b) => b.available - a.available);
       return items.map((g) => ({
@@ -683,7 +616,6 @@ function ExploreTab({
       }));
     }
 
-    // coffee
     if (filter === "coffee") {
       const items = AMENITIES.filter((a) => a.kind === "coffee" && a.open).sort((a, b) => a.waitMins - b.waitMins);
       return items.map((a) => ({
@@ -693,7 +625,6 @@ function ExploreTab({
       }));
     }
 
-    // wellness
     if (filter === "wellness") {
       const items = AMENITIES.filter((a) => a.kind === "wellness" && a.open);
       return items.map((a) => ({
@@ -703,7 +634,6 @@ function ExploreTab({
       }));
     }
 
-    // food
     const items = AMENITIES.filter((a) => (a.kind === "breakfast" || a.kind === "lunch") && a.open).sort((a, b) => a.waitMins - b.waitMins);
     return items.map((a) => ({
       id: a.id,
@@ -733,7 +663,13 @@ function ExploreTab({
 
           <div className="list">
             {listItems.map((it) => (
-              <div key={it.id} className="listrow" onClick={onGoMap}>
+              <div
+                key={it.id}
+                className="listrow"
+                onClick={() => {
+                  onGoMap();
+                }}
+              >
                 <div className="listleft">
                   <div className="listtitle">{it.title}</div>
                   <div className="listsub">{it.sub}</div>
@@ -743,10 +679,12 @@ function ExploreTab({
             ))}
           </div>
 
-          <div className="scenarioFooter">
-            <div className="scenarioLabel">Scenario</div>
-            <ScenarioPicker value={scenarioKey} onChange={onScenario} />
-          </div>
+          {!kioskMode ? (
+            <div className="scenarioFooter">
+              <div className="scenarioLabel">Scenario</div>
+              <ScenarioPicker value={scenarioKey} onChange={onScenario} />
+            </div>
+          ) : null}
         </div>
       </Card>
     </div>
@@ -768,6 +706,8 @@ function buildRoutePoints(args: { garage?: Garage; workspace?: Workspace; meetin
 function MapTab({
   securityMode,
   accessibleOn,
+  indoorOn,
+  onToggleIndoor,
   selectedPoi,
   onSelectPoi,
   route,
@@ -776,6 +716,8 @@ function MapTab({
 }: {
   securityMode: boolean;
   accessibleOn: boolean;
+  indoorOn: boolean;
+  onToggleIndoor: () => void;
   selectedPoi: string | null;
   onSelectPoi: (id: string | null) => void;
   route: Array<{ x: number; y: number; label: string }>;
@@ -786,9 +728,20 @@ function MapTab({
   return (
     <div className="stack">
       <Card>
-        <CardHeader title="Map" subtitle="Campus view and routes" right={<IconBadge tone="cyan" icon={<MapIcon size={14} />} text="Route" />} />
+        <CardHeader title="Map" subtitle="Campus view and routes" right={
+            <div className="top-right">
+              <IconBadge tone="cyan" icon={<MapIcon size={14} />} text="Route" />
+              <Button
+                variant="secondary"
+                left={<BadgeCheck size={16} />}
+                onClick={() => onToggleIndoor()}
+              >
+                {indoorOn ? "Indoor on" : "Indoor"}
+              </Button>
+            </div>
+          } />
         <div className="pad">
-          <CampusMap securityMode={securityMode} accessibleOn={accessibleOn} selectedPoi={selectedPoi} onSelectPoi={onSelectPoi} route={route} />
+          <CampusMap securityMode={securityMode} accessibleOn={accessibleOn} indoorOn={indoorOn} selectedPoi={selectedPoi} onSelectPoi={onSelectPoi} route={route} />
 
           {poi ? (
             <div className="mapDetail">
@@ -823,12 +776,14 @@ function MapTab({
 function CampusMap({
   securityMode,
   accessibleOn,
+  indoorOn,
   selectedPoi,
   onSelectPoi,
   route,
 }: {
   securityMode: boolean;
   accessibleOn: boolean;
+  indoorOn: boolean;
   selectedPoi: string | null;
   onSelectPoi: (id: string | null) => void;
   route: Array<{ x: number; y: number; label: string }>;
@@ -874,6 +829,7 @@ function CampusMap({
             points={route.map((p) => `${p.x},${p.y}`).join(" ")}
             fill="none"
             stroke="rgba(0,168,224,0.9)"
+            strokeDasharray={indoorOn ? "2.5 2" : "0"}
             strokeWidth="1.6"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -927,6 +883,7 @@ function CampusMap({
         <IconBadge tone="neutral" icon={<Flame size={14} />} text="Buzz heatmap" />
         {securityMode ? <IconBadge tone="cyan" icon={<Shield size={14} />} text="Escort" /> : null}
         {accessibleOn ? <IconBadge tone="neutral" icon={<BadgeCheck size={14} />} text="Accessible route" /> : null}
+        {indoorOn ? <IconBadge tone="cyan" icon={<Navigation size={14} />} text="Indoor" /> : null}
       </div>
     </div>
   );
@@ -1535,6 +1492,8 @@ function Style() {
       .brand-title{ font-size:14px; font-weight:900; letter-spacing:-0.02em; line-height:1.1; }
       .brand-sub{ font-size:11px; color: var(--muted); margin-top:4px; line-height:1.25; }
       .top-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+      .iconBtn{ width:34px; height:34px; border-radius:14px; border:1px solid var(--stroke); background: rgba(255,255,255,0.12); color: var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+      .iconBtnOn{ background: rgba(0,168,224,0.16); outline: 2px solid rgba(0,168,224,0.22); }
 
       .pulse{ width:100%; display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-start; margin-bottom:12px; }
 
@@ -1739,6 +1698,13 @@ function Style() {
       .textarea{ width:100%; margin-top:8px; border-radius:14px; padding:10px 12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); color: var(--text); font-weight:900; resize:none; }
       .formHint{ margin-top:8px; font-size:10px; color: var(--muted); line-height:1.25; }
 
+      .shareImg{ margin-top: 12px; height: 120px; border-radius: 18px; border:1px dashed rgba(148,163,184,0.55); background: rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; overflow:hidden; }
+      .sharePh{ font-weight:1000; font-size:11px; color: var(--muted); }
+      .shareRow{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .shareVal{ font-weight:1000; font-size:12px; }
+      .shareSugs{ margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
+      .sug{ border:1px solid var(--stroke); background: rgba(0,168,224,0.10); color: var(--text); padding:8px 10px; border-radius:999px; font-weight:1000; font-size:10px; cursor:pointer; }
+
       .mini-grid-3{ display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; margin-top:10px; width:100%; }
       .mini{ display:flex; align-items:flex-start; gap:10px; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); border-radius:18px; padding:10px; min-width:0; overflow:hidden; }
       .mini-ic{ width:34px; height:34px; border-radius:16px; display:flex; align-items:center; justify-content:center; border:1px solid var(--stroke); background: rgba(255,255,255,0.10); flex: 0 0 auto; }
@@ -1893,6 +1859,11 @@ function PulseBar({ prefs }: { prefs: Preferences }) {
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>("home");
+  const [autopilotOn, setAutopilotOn] = useState(false);
+  const [kioskMode, setKioskMode] = useState(false);
+  const [indoorOn, setIndoorOn] = useState(false);
+  const [shareCaption, setShareCaption] = useState("First day at the future campus. Seamless parking to focus mode.");
+  const [sharePrivate, setSharePrivate] = useState(true);
   const [selectedPoi, setSelectedPoi] = useState<string | null>(null);
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>("s1");
   const [securityMode, setSecurityMode] = useState(false);
@@ -1921,6 +1892,18 @@ export default function App() {
     setSecurityMode(scenarioKey === "s6" ? true : securityMode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenarioKey]);
+
+  useEffect(() => {
+    if (!autopilotOn) return;
+    const order: ScenarioKey[] = ["s1", "s2", "s3", "s4", "s5", "s6"];
+    const idx = order.indexOf(scenarioKey);
+    const t = window.setTimeout(() => {
+      const next = order[(idx + 1) % order.length];
+      setScenarioKey(next);
+      showToast("Demo autopilot", `Switched to ${next.toUpperCase()} (mock).`);
+    }, 4200);
+    return () => window.clearTimeout(t);
+  }, [autopilotOn, scenarioKey]);
 
   const effectivePrefs = useMemo(() => {
     const persona = PERSONAS.find((p) => p.key === prefs.persona);
@@ -1979,6 +1962,12 @@ export default function App() {
         <div className="top-right">
           <IconBadge tone="navy" icon={<Calendar size={14} />} text={formatTime(now)} />
           {effectivePrefs.accessibility ? <IconBadge tone="neutral" icon={<BadgeCheck size={14} />} text="Accessible" /> : null}
+          <button className="iconBtn" type="button" onClick={() => setSheet("notify")} aria-label="Notifications">
+            <Bell size={16} />
+          </button>
+          <button className={cx("iconBtn", kioskMode && "iconBtnOn")} type="button" onClick={() => setSheet("demo")} aria-label="Demo controls">
+            <Sparkles size={16} />
+          </button>
         </div>
       </header>
 
@@ -1991,12 +1980,20 @@ export default function App() {
             scenarioKey={scenarioKey}
             onScenario={setScenarioKey}
             onReportIssue={() => setSheet("issue")}
+            kioskMode={kioskMode}
+            onShareMoment={() => {
+              setShareCaption("First day at the future campus. Seamless parking to focus mode.");
+              setSheet("share");
+            }}
             onAction={showToast}
             socialOn={effectivePrefs.socialInsights}
             arrivalStaged={arrivalStaged}
             onStartArrival={() => setArrivalStaged(true)}
             workMode={scenario.workMode}
-            onWorkMode={() => setTab("home")}
+            onWorkMode={(m) => {
+              showToast("Work mode", `Mock: switched to ${m} and re-ranked spaces.`);
+              // In a real build, this would persist to profile + re-rank across tabs.
+            }}
             onGoExplore={() => setTab("explore")}
             onGoMap={() => setTab("map")}
             onGoSchedule={() => setTab("schedule")}
@@ -2013,13 +2010,24 @@ export default function App() {
         ) : null}
 
         {tab === "explore" ? (
-          <ExploreTab scenarioKey={scenarioKey} onScenario={setScenarioKey} prefs={effectivePrefs} onGoMap={() => setTab("map")} />
+          <ExploreTab
+            scenarioKey={scenarioKey}
+            onScenario={setScenarioKey}
+            prefs={effectivePrefs}
+            onGoMap={() => setTab("map")}
+            kioskMode={kioskMode}
+          />
         ) : null}
 
         {tab === "map" ? (
           <MapTab
             securityMode={securityMode}
             accessibleOn={effectivePrefs.accessibility}
+            indoorOn={indoorOn}
+            onToggleIndoor={() => {
+              setIndoorOn((v) => !v);
+              showToast("Indoor routing", `Mock: indoor routing ${!indoorOn ? "enabled" : "disabled"}.`);
+            }}
             selectedPoi={selectedPoi}
             onSelectPoi={setSelectedPoi}
             route={buildRoutePoints({ garage: recommendedGarage?.garage, workspace: recommendedWorkspace?.workspace, meetingBldg: nextBldg })}
@@ -2046,6 +2054,128 @@ export default function App() {
 
         {tab === "admin" ? <AdminTab scenarioKey={scenarioKey} onScenario={setScenarioKey} /> : null}
       </main>
+
+      {/* Notifications */}
+      {sheet === "notify" ? (
+        <div className="card" style={{ position: "absolute", left: 14, right: 14, bottom: 110, padding: 14 }}>
+          <div className="card-title">Notifications</div>
+          <div className="card-sub" style={{ marginTop: 6 }}>Context-aware nudges (mock).</div>
+
+          <div className="list" style={{ marginTop: 10 }}>
+            <div className="listrow" onClick={() => { setTab("schedule"); setSheet(null); showToast("Leave-time nudge", "Mock: leave in 6 minutes for your next meeting."); }}>
+              <div className="listleft">
+                <div className="listtitle">Leave in 6 minutes</div>
+                <div className="listsub">Route optimized for your next building.</div>
+              </div>
+              <ChevronRight size={16} className="muted" />
+            </div>
+
+            <div className="listrow" onClick={() => { setTab("map"); setSheet(null); showToast("Occupancy spike", "Mock: re-route around congestion and keep on-time starts high."); }}>
+              <div className="listleft">
+                <div className="listtitle">Occupancy spike near Building B</div>
+                <div className="listsub">Alternate corridor recommended.</div>
+              </div>
+              <ChevronRight size={16} className="muted" />
+            </div>
+
+            <div className="listrow" onClick={() => { setTab("home"); setSheet(null); showToast("Coffee window", "Mock: wait time improving for your favorite order."); }}>
+              <div className="listleft">
+                <div className="listtitle">Coffee wait trending down</div>
+                <div className="listsub">Best time to order: next 8 minutes.</div>
+              </div>
+              <ChevronRight size={16} className="muted" />
+            </div>
+          </div>
+
+          <div className="row3" style={{ marginTop: 12 }}>
+            <Button variant="secondary" onClick={() => setSheet(null)} left={<X size={16} />}>Close</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Share moment */}
+      {sheet === "share" ? (
+        <div className="card" style={{ position: "absolute", left: 14, right: 14, bottom: 110, padding: 14 }}>
+          <div className="card-title">Share a campus moment</div>
+          <div className="card-sub" style={{ marginTop: 6 }}>Mock share card with privacy controls.</div>
+
+          <div className="shareImg" aria-hidden="true">
+            <div className="sharePh">Photo placeholder</div>
+          </div>
+
+          <div className="form" style={{ marginTop: 10 }}>
+            <div className="formRow">
+              <div className="formLbl">Caption</div>
+              <textarea className="textarea" value={shareCaption} onChange={(e) => setShareCaption(e.target.value)} rows={3} />
+              <div className="shareSugs">
+                {[
+                  "Seamless arrival: parking → focus pod → on-time start.",
+                  "Future campus energy. Quiet spaces when I need them.",
+                  "Coffee on the way, route optimized, day starts smooth.",
+                ].map((s) => (
+                  <button key={s} className="sug" type="button" onClick={() => setShareCaption(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="formRow">
+              <div className="formLbl">Privacy</div>
+              <div className="shareRow">
+                <div className="shareVal">{sharePrivate ? "Internal only" : "Public"}</div>
+                <Button variant="secondary" onClick={() => setSharePrivate((v) => !v)} left={<Shield size={16} />}>Toggle</Button>
+              </div>
+              <div className="formHint">Future: policy checks, watermarking, and approvals.</div>
+            </div>
+          </div>
+
+          <div className="row3" style={{ marginTop: 12 }}>
+            <Button variant="secondary" onClick={() => setSheet(null)} left={<X size={16} />}>Close</Button>
+            <Button variant="primary" onClick={() => { showToast("Shared", "Mock: moment shared with the selected audience."); setSheet(null); }} left={<Send size={16} />}>Share</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Demo controls */}
+      {sheet === "demo" ? (
+        <div className="card" style={{ position: "absolute", left: 14, right: 14, bottom: 110, padding: 14 }}>
+          <div className="card-title">Demo controls</div>
+          <div className="card-sub" style={{ marginTop: 6 }}>Kiosk mode, autopilot, and scenario control (mock).</div>
+
+          <div className="form" style={{ marginTop: 10 }}>
+            <div className="formRow">
+              <div className="formLbl">Scenario</div>
+              <div style={{ marginTop: 10 }}>
+                <ScenarioPicker value={scenarioKey} onChange={(k) => { setScenarioKey(k); showToast("Scenario", `Switched to ${k.toUpperCase()} (mock).`); }} />
+              </div>
+            </div>
+
+            <div className="formRow">
+              <div className="formLbl">Autopilot</div>
+              <div className="shareRow" style={{ marginTop: 10 }}>
+                <div className="shareVal">{autopilotOn ? "On" : "Off"}</div>
+                <Button variant={autopilotOn ? "secondary" : "primary"} onClick={() => setAutopilotOn((v) => !v)} left={<Timer size={16} />}>{autopilotOn ? "Stop" : "Start"}</Button>
+              </div>
+              <div className="formHint">Auto-advances through S1–S6 every few seconds.</div>
+            </div>
+
+            <div className="formRow">
+              <div className="formLbl">Kiosk mode</div>
+              <div className="shareRow" style={{ marginTop: 10 }}>
+                <div className="shareVal">{kioskMode ? "On" : "Off"}</div>
+                <Button variant="secondary" onClick={() => { setKioskMode((v) => !v); showToast("Kiosk mode", `Mock: ${!kioskMode ? "hide" : "show"} scenario footers.`); }} left={<Sparkles size={16} />}>Toggle</Button>
+              </div>
+              <div className="formHint">Hides scenario controls from the main UI for a clean VP view.</div>
+            </div>
+          </div>
+
+          <div className="row3" style={{ marginTop: 12 }}>
+            <Button variant="secondary" onClick={() => setSheet(null)} left={<X size={16} />}>Close</Button>
+            <Button variant="secondary" onClick={() => { setScenarioKey("s1"); setAutopilotOn(false); showToast("Reset", "Mock: returned to S1."); }} left={<ChevronRight size={16} />}>Go S1</Button>
+          </div>
+        </div>
+      ) : null}
 
       <button
         className="fab"
@@ -2205,6 +2335,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

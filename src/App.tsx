@@ -499,11 +499,7 @@ export default function App() {
             scenario={scenario}
             scenarioKey={scenarioKey}
             onScenario={setScenarioKey}
-            onReportIssue={() => setSheet("issue")}
-            securityMode={securityMode}
-            onEscort={() => setSecurityMode((v) => !v)}
-            prefs={effectivePrefs}
-            workMode={activeWorkMode}
+            onReportIssue={() => setSheet("issue")}            workMode={activeWorkMode}
             onWorkMode={(m) => setWorkMode(m)}
             onGoExplore={() => setTab("explore")}
             onGoMap={() => setTab("map")}
@@ -696,11 +692,7 @@ function HomeTab(props: {
   scenario: ScenarioState;
   scenarioKey: ScenarioKey;
   onScenario: (k: ScenarioKey) => void;
-  onReportIssue: () => void;
-  securityMode: boolean;
-  onEscort: () => void;
-  prefs: Preferences;
-  workMode: WorkMode;
+  onReportIssue: () => void;  workMode: WorkMode;
   onWorkMode: (m: WorkMode) => void;
   onGoExplore: () => void;
   onGoMap: () => void;
@@ -719,11 +711,7 @@ function HomeTab(props: {
   const {
     scenario,
     scenarioKey,
-    onScenario,
-    securityMode,
-    onEscort,
-    prefs,
-    workMode,
+    onScenario,    workMode,
     onWorkMode,
     onGoExplore,
     onGoMap,
@@ -1789,3 +1777,4 @@ function Style() {
     `}</style>
   );
 }
+
